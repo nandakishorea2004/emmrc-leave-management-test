@@ -1,7 +1,9 @@
 
 <?php
+
 session_start();
-require_once "../db.php";
+
+require_once __DIR__ . "/../db.php";
 
 // Admin access
 if (($_SESSION["role"] ?? "") !== "admin") {
@@ -44,34 +46,35 @@ function finishCancellation(string $message): void
 }
 
 try {
-    $conn->begin_transaction();
+
+    $conn->beginTransaction();
 
     // 1. Lock and fetch the leave record
     $stmt = $conn->prepare("
-    SELECT
-        lr.id,
-        lr.employee_id,
-        lr.leave_type_id,
-        lr.from_date,
-        lr.to_date,
-        lr.days_taken,
-        lr.status,
-        lr.balance_deducted,
-        lr.balance_restored,
-        lt.code AS leave_code
+        SELECT
+            lr.id,
+            lr.employee_id,
+            lr.leave_type_id,
+            lr.from_date,
+            lr.to_date,
+            lr.days_taken,
+            lr.status,
+            lr.balance_deducted,
+            lr.balance_restored,
+            lt.code AS leave_code
         FROM leave_records lr
         INNER JOIN leave_types lt
             ON lt.id = lr.leave_type_id
-        WHERE lr.id = ?
+        WHERE lr.id = :leave_id
         LIMIT 1
         FOR UPDATE
     ");
 
-    $stmt->bind_param("i", $leaveId);
-    $stmt->execute();
+    $stmt->execute([
+        ":leave_id" => $leaveId
+    ]);
 
-    $leave = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
+    $leave = $stmt->fetch();
 
     if (!$leave) {
         throw new RuntimeException("Leave record not found.");
@@ -90,180 +93,127 @@ try {
     $balanceDeducted = (int)$leave["balance_deducted"];
     $balanceRestored = (int)$leave["balance_restored"];
 
-    // Match enter_leave.php: use the From Date year
+    // Use the From Date year
     $year = (int)date("Y", strtotime($leave["from_date"]));
 
     if ($days <= 0) {
         throw new RuntimeException("Invalid leave duration.");
     }
 
-    // 2. Restore balance only if it was actually deducted
-//    and has not already been restored.
+    // 2. Restore balance only if it was deducted
+    // and has not already been restored.
 
-if ($balanceDeducted === 1 && $balanceRestored === 0) {
+    if ($balanceDeducted === 1 && $balanceRestored === 0) {
 
-    // CL, EL and HPL restore their own balances.
-    if (in_array($leaveCode, ["CL", "EL", "HPL"], true)) {
+        // CL, EL and HPL restore their own balances.
+        if (in_array($leaveCode, ["CL", "EL", "HPL"], true)) {
 
-        $restoreStmt = $conn->prepare("
-            UPDATE leave_balances
-            SET
-                used = used - ?,
-                closing_balance = closing_balance + ?
-            WHERE employee_id = ?
-              AND leave_type_id = ?
-              AND year = ?
-              AND used >= ?
+            $restoreStmt = $conn->prepare("
+                UPDATE leave_balances
+                SET
+                    used = used - :days_used,
+                    closing_balance = closing_balance + :days_restored
+                WHERE employee_id = :employee_id
+                  AND leave_type_id = :leave_type_id
+                  AND year = :year
+                  AND used >= :minimum_used
+            ");
+
+            $restoreStmt->execute([
+                ":days_used" => $days,
+                ":days_restored" => $days,
+                ":employee_id" => $employeeId,
+                ":leave_type_id" => $leaveTypeId,
+                ":year" => $year,
+                ":minimum_used" => $days
+            ]);
+
+            if ($restoreStmt->rowCount() !== 1) {
+                throw new RuntimeException(
+                    "The leave balance could not be restored. Please verify the balance row and used days."
+                );
+            }
+        }
+
+        // COM restores twice the leave days to HPL.
+        elseif ($leaveCode === "COM") {
+
+            $hplStmt = $conn->prepare("
+                SELECT id
+                FROM leave_types
+                WHERE code = 'HPL'
+                  AND status = 1
+                LIMIT 1
+            ");
+
+            $hplStmt->execute();
+            $hpl = $hplStmt->fetch();
+
+            if (!$hpl) {
+                throw new RuntimeException("HPL leave type not found.");
+            }
+
+            $hplTypeId = (int)$hpl["id"];
+            $hplDays = $days * 2;
+
+            $restoreHplStmt = $conn->prepare("
+                UPDATE leave_balances
+                SET
+                    used = used - :days_used,
+                    closing_balance = closing_balance + :days_restored
+                WHERE employee_id = :employee_id
+                  AND leave_type_id = :leave_type_id
+                  AND year = :year
+                  AND used >= :minimum_used
+            ");
+
+            $restoreHplStmt->execute([
+                ":days_used" => $hplDays,
+                ":days_restored" => $hplDays,
+                ":employee_id" => $employeeId,
+                ":leave_type_id" => $hplTypeId,
+                ":year" => $year,
+                ":minimum_used" => $hplDays
+            ]);
+
+            if ($restoreHplStmt->rowCount() !== 1) {
+                throw new RuntimeException(
+                    "The HPL balance could not be restored for COM."
+                );
+            }
+        }
+
+        else {
+            throw new RuntimeException(
+                "Unexpected leave type marked as balance-deducted: " .
+                $leaveCode
+            );
+        }
+
+        // Record that restoration has happened.
+        $trackingStmt = $conn->prepare("
+            UPDATE leave_records
+            SET balance_restored = 1
+            WHERE id = :leave_id
+              AND balance_deducted = 1
+              AND balance_restored = 0
+              AND status = 'ACTIVE'
         ");
 
-        if (!$restoreStmt) {
+        $trackingStmt->execute([
+            ":leave_id" => $leaveId
+        ]);
+
+        if ($trackingStmt->rowCount() !== 1) {
             throw new RuntimeException(
-                "Unable to prepare balance restoration."
+                "Balance restoration tracking could not be updated."
             );
         }
-
-        $restoreStmt->bind_param(
-            "ddiiid",
-            $days,
-            $days,
-            $employeeId,
-            $leaveTypeId,
-            $year,
-            $days
-        );
-
-        if (!$restoreStmt->execute()) {
-            throw new RuntimeException(
-                "Unable to restore leave balance: " .
-                $restoreStmt->error
-            );
-        }
-
-        if ($restoreStmt->affected_rows !== 1) {
-            throw new RuntimeException(
-                "The leave balance could not be restored. " .
-                "Please verify the balance row and used days."
-            );
-        }
-
-        $restoreStmt->close();
     }
 
-    // COM restores twice the leave days to HPL.
-    elseif ($leaveCode === "COM") {
-
-        $hplStmt = $conn->prepare("
-            SELECT id
-            FROM leave_types
-            WHERE code = 'HPL'
-              AND status = 1
-            LIMIT 1
-        ");
-
-        if (!$hplStmt) {
-            throw new RuntimeException(
-                "Unable to prepare HPL leave type query."
-            );
-        }
-
-        $hplStmt->execute();
-        $hpl = $hplStmt->get_result()->fetch_assoc();
-        $hplStmt->close();
-
-        if (!$hpl) {
-            throw new RuntimeException("HPL leave type not found.");
-        }
-
-        $hplTypeId = (int)$hpl["id"];
-        $hplDays = $days * 2;
-
-        $restoreHplStmt = $conn->prepare("
-            UPDATE leave_balances
-            SET
-                used = used - ?,
-                closing_balance = closing_balance + ?
-            WHERE employee_id = ?
-              AND leave_type_id = ?
-              AND year = ?
-              AND used >= ?
-        ");
-
-        if (!$restoreHplStmt) {
-            throw new RuntimeException(
-                "Unable to prepare HPL restoration."
-            );
-        }
-
-        $restoreHplStmt->bind_param(
-            "ddiiid",
-            $hplDays,
-            $hplDays,
-            $employeeId,
-            $hplTypeId,
-            $year,
-            $hplDays
-        );
-
-        if (!$restoreHplStmt->execute()) {
-            throw new RuntimeException(
-                "Unable to restore HPL balance: " .
-                $restoreHplStmt->error
-            );
-        }
-
-        if ($restoreHplStmt->affected_rows !== 1) {
-            throw new RuntimeException(
-                "The HPL balance could not be restored for COM."
-            );
-        }
-
-        $restoreHplStmt->close();
-    }
-
-    else {
-        throw new RuntimeException(
-            "Unexpected leave type marked as balance-deducted: " .
-            $leaveCode
-        );
-    }
-
-    // Record that the balance restoration has happened.
-    $trackingStmt = $conn->prepare("
-        UPDATE leave_records
-        SET balance_restored = 1
-        WHERE id = ?
-          AND balance_deducted = 1
-          AND balance_restored = 0
-          AND status = 'ACTIVE'
-    ");
-
-    if (!$trackingStmt) {
-        throw new RuntimeException(
-            "Unable to prepare balance restoration tracking."
-        );
-    }
-
-    $trackingStmt->bind_param("i", $leaveId);
-
-    if (!$trackingStmt->execute()) {
-        throw new RuntimeException(
-            "Unable to update balance restoration tracking."
-        );
-    }
-
-    if ($trackingStmt->affected_rows !== 1) {
-        throw new RuntimeException(
-            "Balance restoration tracking could not be updated."
-        );
-    }
-
-    $trackingStmt->close();
-}
-
-// If balance_deducted = 0, no balance is restored.
-// This applies to SCL, LWA, ML and PL.
-// If balance_restored = 1, restoration is not repeated.
-
+    // If balance_deducted = 0, no balance is restored.
+    // This applies to SCL, LWA, ML and PL.
+    // If balance_restored = 1, restoration is not repeated.
 
     // 3. Mark the leave as cancelled
     $cancelledBy = (int)($_SESSION["user_id"] ?? 0);
@@ -273,33 +223,23 @@ if ($balanceDeducted === 1 && $balanceRestored === 0) {
         SET
             status = 'CANCELLED',
             cancelled_at = NOW(),
-            cancelled_by = ?
-        WHERE id = ?
+            cancelled_by = :cancelled_by
+        WHERE id = :leave_id
           AND status = 'ACTIVE'
     ");
 
-    $cancelStmt->bind_param(
-        "ii",
-        $cancelledBy,
-        $leaveId
-    );
+    $cancelStmt->execute([
+        ":cancelled_by" => $cancelledBy,
+        ":leave_id" => $leaveId
+    ]);
 
-    if (!$cancelStmt->execute()) {
-        throw new RuntimeException(
-            "Unable to update leave cancellation status."
-        );
-    }
-
-    if ($cancelStmt->affected_rows !== 1) {
+    if ($cancelStmt->rowCount() !== 1) {
         throw new RuntimeException(
             "Leave cancellation status could not be updated."
         );
     }
 
-    $cancelStmt->close();
-
     // 4. Find affected EL cycles
-    // Only cycles previously marked as having leave are relevant.
     $cyclesStmt = $conn->prepare("
         SELECT
             id,
@@ -310,30 +250,20 @@ if ($balanceDeducted === 1 && $balanceRestored === 0) {
                 YEAR(cycle_end_date)
             ) AS credit_year
         FROM el_cycles
-        WHERE employee_id = ?
-          AND cycle_start_date <= ?
-          AND cycle_end_date >= ?
+        WHERE employee_id = :employee_id
+          AND cycle_start_date <= :leave_to_date
+          AND cycle_end_date >= :leave_from_date
           AND leave_occurred = 1
         FOR UPDATE
     ");
 
-    $cyclesStmt->bind_param(
-        "iss",
-        $employeeId,
-        $leave["to_date"],
-        $leave["from_date"]
-    );
+    $cyclesStmt->execute([
+        ":employee_id" => $employeeId,
+        ":leave_to_date" => $leave["to_date"],
+        ":leave_from_date" => $leave["from_date"]
+    ]);
 
-    $cyclesStmt->execute();
-    $cyclesResult = $cyclesStmt->get_result();
-
-    $affectedCycles = [];
-
-    while ($cycle = $cyclesResult->fetch_assoc()) {
-        $affectedCycles[] = $cycle;
-    }
-
-    $cyclesStmt->close();
+    $affectedCycles = $cyclesStmt->fetchAll();
 
     // Find the EL leave type
     $elTypeStmt = $conn->prepare("
@@ -344,8 +274,7 @@ if ($balanceDeducted === 1 && $balanceRestored === 0) {
     ");
 
     $elTypeStmt->execute();
-    $elType = $elTypeStmt->get_result()->fetch_assoc();
-    $elTypeStmt->close();
+    $elType = $elTypeStmt->fetch();
 
     if ($affectedCycles && !$elType) {
         throw new RuntimeException("EL leave type not found.");
@@ -365,26 +294,19 @@ if ($balanceDeducted === 1 && $balanceRestored === 0) {
         $activeLeaveStmt = $conn->prepare("
             SELECT COUNT(*) AS total
             FROM leave_records
-            WHERE employee_id = ?
+            WHERE employee_id = :employee_id
               AND status = 'ACTIVE'
-              AND from_date <= ?
-              AND to_date >= ?
+              AND from_date <= :cycle_end
+              AND to_date >= :cycle_start
         ");
 
-        $activeLeaveStmt->bind_param(
-            "iss",
-            $employeeId,
-            $cycleEnd,
-            $cycleStart
-        );
+        $activeLeaveStmt->execute([
+            ":employee_id" => $employeeId,
+            ":cycle_end" => $cycleEnd,
+            ":cycle_start" => $cycleStart
+        ]);
 
-        $activeLeaveStmt->execute();
-
-        $activeLeaveCount = (int)$activeLeaveStmt
-            ->get_result()
-            ->fetch_assoc()["total"];
-
-        $activeLeaveStmt->close();
+        $activeLeaveCount = (int)$activeLeaveStmt->fetch()["total"];
 
         // Another active leave remains: do not restore EL credit
         if ($activeLeaveCount > 0) {
@@ -401,26 +323,20 @@ if ($balanceDeducted === 1 && $balanceRestored === 0) {
         $elBalanceStmt = $conn->prepare("
             SELECT id, credited, closing_balance
             FROM leave_balances
-            WHERE employee_id = ?
-              AND leave_type_id = ?
-              AND year = ?
+            WHERE employee_id = :employee_id
+              AND leave_type_id = :leave_type_id
+              AND year = :year
             LIMIT 1
             FOR UPDATE
         ");
 
-        $elBalanceStmt->bind_param(
-            "iii",
-            $employeeId,
-            $elTypeId,
-            $creditYear
-        );
+        $elBalanceStmt->execute([
+            ":employee_id" => $employeeId,
+            ":leave_type_id" => $elTypeId,
+            ":year" => $creditYear
+        ]);
 
-        $elBalanceStmt->execute();
-        $elBalance = $elBalanceStmt
-            ->get_result()
-            ->fetch_assoc();
-
-        $elBalanceStmt->close();
+        $elBalance = $elBalanceStmt->fetch();
 
         if (!$elBalance) {
             throw new RuntimeException(
@@ -446,25 +362,16 @@ if ($balanceDeducted === 1 && $balanceRestored === 0) {
         $updateElStmt = $conn->prepare("
             UPDATE leave_balances
             SET
-                credited = ?,
-                closing_balance = ?
-            WHERE id = ?
+                credited = :credited,
+                closing_balance = :closing_balance
+            WHERE id = :id
         ");
 
-        $updateElStmt->bind_param(
-            "ddi",
-            $newCredited,
-            $newClosing,
-            $elBalanceId
-        );
-
-        if (!$updateElStmt->execute()) {
-            throw new RuntimeException(
-                "Unable to recalculate EL balance."
-            );
-        }
-
-        $updateElStmt->close();
+        $updateElStmt->execute([
+            ":credited" => $newCredited,
+            ":closing_balance" => $newClosing,
+            ":id" => $elBalanceId
+        ]);
 
         // Update current cycle credit.
         // Keep el_original_credited unchanged for audit history.
@@ -472,25 +379,16 @@ if ($balanceDeducted === 1 && $balanceRestored === 0) {
             UPDATE el_cycles
             SET
                 leave_occurred = 0,
-                el_credited = ?,
+                el_credited = :el_credited,
                 el_reversed = 0,
                 reversed_at = NULL
-            WHERE id = ?
+            WHERE id = :id
         ");
 
-        $updateCycleStmt->bind_param(
-            "di",
-            $allowedCredit,
-            $cycleId
-        );
-
-        if (!$updateCycleStmt->execute()) {
-            throw new RuntimeException(
-                "Unable to update EL cycle " . $cycleId
-            );
-        }
-
-        $updateCycleStmt->close();
+        $updateCycleStmt->execute([
+            ":el_credited" => $allowedCredit,
+            ":id" => $cycleId
+        ]);
     }
 
     // 6. All changes succeed together
@@ -505,9 +403,13 @@ if ($balanceDeducted === 1 && $balanceRestored === 0) {
 
 } catch (Throwable $e) {
 
-    $conn->rollback();
+    if ($conn->inTransaction()) {
+        $conn->rollBack();
+    }
+
+    error_log("Leave cancellation error: " . $e->getMessage());
 
     finishCancellation(
-        "Cancellation failed: " . $e->getMessage()
+        "Cancellation failed. Please check the database configuration or contact the administrator."
     );
 }
