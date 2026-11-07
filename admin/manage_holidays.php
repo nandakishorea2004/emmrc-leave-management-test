@@ -1,34 +1,21 @@
+
 <?php
 
 session_start();
 
-require_once "../db.php";
+require_once __DIR__ . "/../db.php";
 
-
-/* =========================================================
-   ADMIN ACCESS CHECK
-========================================================= */
-
+/* ADMIN ACCESS CHECK */
 if (!isset($_SESSION["role"]) || $_SESSION["role"] !== "admin") {
-
     header("Location: ../index.php");
     exit();
-
 }
 
-
-/* =========================================================
-   MESSAGE VARIABLES
-========================================================= */
-
+/* MESSAGE VARIABLES */
 $message = "";
 $message_type = "";
 
-
-/* =========================================================
-   PAGINATION
-========================================================= */
-
+/* PAGINATION */
 $items_per_page = 10;
 
 $current_page = isset($_GET["page"])
@@ -37,29 +24,16 @@ $current_page = isset($_GET["page"])
 
 $offset = ($current_page - 1) * $items_per_page;
 
-
-/* =========================================================
-   ADD / DELETE HOLIDAY
-========================================================= */
-
+/* ADD / DELETE HOLIDAY */
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
     $action = $_POST["action"] ?? "";
 
-
-    /* =====================================================
-       ADD HOLIDAY
-    ===================================================== */
-
+    /* ADD HOLIDAY */
     if ($action === "add") {
 
         $holiday_date = trim($_POST["holiday_date"] ?? "");
         $description = trim($_POST["holiday_name"] ?? "");
-
-
-        /* ---------------------------------------------
-           VALIDATION
-        --------------------------------------------- */
 
         if ($holiday_date === "" || $description === "") {
 
@@ -69,14 +43,14 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         } else {
 
             $date_object = DateTime::createFromFormat(
-                "Y-m-d",
+                "!Y-m-d",
                 $holiday_date
             );
 
-            $valid_date =
+            $valid_date = (
                 $date_object &&
-                $date_object->format("Y-m-d") === $holiday_date;
-
+                $date_object->format("Y-m-d") === $holiday_date
+            );
 
             if (!$valid_date) {
 
@@ -87,11 +61,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
                 $day = $date_object->format("l");
 
-
-                /* -----------------------------------------
-                   CHECK DUPLICATE DATE
-                ----------------------------------------- */
-
+                /* CHECK DUPLICATE DATE */
                 $check = $conn->prepare("
                     SELECT id
                     FROM holidays
@@ -99,215 +69,125 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                     LIMIT 1
                 ");
 
-                $check->bind_param(
-                    "s",
-                    $holiday_date
-                );
-
-                $check->execute();
-
-                $exists = $check
-                    ->get_result()
-                    ->fetch_assoc();
-
-                $check->close();
-
+                $check->execute([$holiday_date]);
+                $exists = $check->fetch(PDO::FETCH_ASSOC);
 
                 if ($exists) {
 
-                    $message =
-                        "A holiday already exists for this date.";
-
+                    $message = "A holiday already exists for this date.";
                     $message_type = "error";
 
                 } else {
 
-
-                    /* -------------------------------------
-                       MANUALLY ADDED HOLIDAY
-                    ------------------------------------- */
-
+                    /* MANUALLY ADDED HOLIDAY */
                     $source_type = "M";
 
+                    try {
 
-                    $stmt = $conn->prepare("
-                        INSERT INTO holidays
-                        (
-                            holiday_date,
-                            day,
-                            description,
-                            source_type
-                        )
-                        VALUES (?, ?, ?, ?)
-                    ");
+                        $stmt = $conn->prepare("
+                            INSERT INTO holidays
+                            (
+                                holiday_date,
+                                day,
+                                description,
+                                source_type
+                            )
+                            VALUES (?, ?, ?, ?)
+                        ");
 
-
-                    if (!$stmt) {
-
-                        $message =
-                            "Database error: unable to prepare holiday.";
-
-                        $message_type = "error";
-
-                    } else {
-
-                        $stmt->bind_param(
-                            "ssss",
+                        $stmt->execute([
                             $holiday_date,
                             $day,
                             $description,
                             $source_type
-                        );
+                        ]);
 
+                        $message = "Holiday added successfully.";
+                        $message_type = "success";
 
-                        if ($stmt->execute()) {
+                        /* SHOW NEW HOLIDAY AT THE TOP */
+                        $current_page = 1;
+                        $offset = 0;
 
-                            $message =
-                                "Holiday added successfully.";
+                    } catch (Throwable $e) {
 
-                            $message_type = "success";
+                        error_log("Add holiday error: " . $e->getMessage());
 
-                            /*
-                             * Go back to page 1 so the newly
-                             * added holiday appears at the top.
-                             */
-                            $current_page = 1;
-                            $offset = 0;
-
-                        } else {
-
-                            $message =
-                                "Unable to add the holiday.";
-
-                            $message_type = "error";
-
-                        }
-
-                        $stmt->close();
-
+                        $message = "Unable to add the holiday.";
+                        $message_type = "error";
                     }
-
                 }
-
             }
-
         }
-
     }
 
-
-    /* =====================================================
-       DELETE HOLIDAY
-    ===================================================== */
-
+    /* DELETE HOLIDAY */
     elseif ($action === "delete") {
 
-        $holiday_id =
-            (int)($_POST["holiday_id"] ?? 0);
-
+        $holiday_id = (int)($_POST["holiday_id"] ?? 0);
 
         if ($holiday_id > 0) {
 
-            $stmt = $conn->prepare("
-                DELETE FROM holidays
-                WHERE id = ?
-                LIMIT 1
-            ");
+            try {
 
-            $stmt->bind_param(
-                "i",
-                $holiday_id
-            );
+                $stmt = $conn->prepare("
+                    DELETE FROM holidays
+                    WHERE id = ?
+                    LIMIT 1
+                ");
 
+                $stmt->execute([$holiday_id]);
 
-            if (
-                $stmt->execute() &&
-                $stmt->affected_rows > 0
-            ) {
+                if ($stmt->rowCount() > 0) {
 
-                $message =
-                    "Holiday deleted successfully.";
+                    $message = "Holiday deleted successfully.";
+                    $message_type = "success";
 
-                $message_type = "success";
+                } else {
 
-            } else {
+                    $message = "Holiday could not be deleted.";
+                    $message_type = "error";
+                }
 
-                $message =
-                    "Holiday could not be deleted.";
+            } catch (Throwable $e) {
 
+                error_log("Delete holiday error: " . $e->getMessage());
+
+                $message = "Holiday could not be deleted.";
                 $message_type = "error";
-
             }
-
-            $stmt->close();
-
         }
-
     }
-
 }
 
-
-/* =========================================================
-   TOTAL HOLIDAY COUNT
-========================================================= */
-
-$total_holidays = 0;
-
-
-$stmt = $conn->prepare("
+/* TOTAL HOLIDAY COUNT */
+$count_stmt = $conn->prepare("
     SELECT COUNT(*) AS total
     FROM holidays
 ");
 
+$count_stmt->execute();
 
-$stmt->execute();
+$count_row = $count_stmt->fetch(PDO::FETCH_ASSOC);
 
-$result = $stmt->get_result();
+$total_holidays = (int)($count_row["total"] ?? 0);
 
-$row = $result->fetch_assoc();
-
-$total_holidays =
-    (int)($row["total"] ?? 0);
-
-$stmt->close();
-
-
-/* =========================================================
-   TOTAL PAGES
-========================================================= */
-
+/* TOTAL PAGES */
 $total_pages = max(
     1,
-    (int)ceil(
-        $total_holidays / $items_per_page
-    )
+    (int)ceil($total_holidays / $items_per_page)
 );
 
-
-/*
- * If current page becomes larger than
- * the available pages, move to the last page.
- */
-
+/* CORRECT CURRENT PAGE */
 if ($current_page > $total_pages) {
 
     $current_page = $total_pages;
 
-    $offset =
-        ($current_page - 1) *
-        $items_per_page;
-
+    $offset = ($current_page - 1) * $items_per_page;
 }
 
-
-/* =========================================================
-   LOAD HOLIDAYS
-   LATEST / LAST COME FIRST
-========================================================= */
-
+/* LOAD HOLIDAYS */
 $holidays = [];
-
 
 $stmt = $conn->prepare("
     SELECT
@@ -323,40 +203,20 @@ $stmt = $conn->prepare("
     LIMIT ? OFFSET ?
 ");
 
-
-$stmt->bind_param(
-    "ii",
-    $items_per_page,
-    $offset
-);
-
+/* Bind pagination values as integers */
+$stmt->bindValue(1, $items_per_page, PDO::PARAM_INT);
+$stmt->bindValue(2, $offset, PDO::PARAM_INT);
 
 $stmt->execute();
 
-$result = $stmt->get_result();
+$holidays = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-
-while ($row = $result->fetch_assoc()) {
-
-    $holidays[] = $row;
-
-}
-
-
-$stmt->close();
-
-
-/* =========================================================
-   SEE MORE / NEXT PAGE
-========================================================= */
-
-$has_next_page =
-    $current_page < $total_pages;
-
-$has_previous_page =
-    $current_page > 1;
+/* PAGINATION LINKS */
+$has_next_page = $current_page < $total_pages;
+$has_previous_page = $current_page > 1;
 
 ?>
+
 
 <!DOCTYPE html>
 
