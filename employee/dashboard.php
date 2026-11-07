@@ -1,8 +1,10 @@
+
 <?php
 
 session_start();
 
-require_once "../db.php";
+require_once __DIR__ . "/../db.php";
+
 
 /* =========================================================
    EMPLOYEE ACCESS CHECK
@@ -40,17 +42,15 @@ $stmt = $conn->prepare("
         gender,
         profile_picture
     FROM employees
-    WHERE employee_id = ?
+    WHERE employee_id = :employee_id
     LIMIT 1
 ");
 
-$stmt->bind_param("s", $employee_id);
-$stmt->execute();
+$stmt->execute([
+    ":employee_id" => $employee_id
+]);
 
-$result = $stmt->get_result();
-$employee = $result->fetch_assoc();
-
-$stmt->close();
+$employee = $stmt->fetch();
 
 
 if (!$employee) {
@@ -76,10 +76,9 @@ $department = $employee["department"];
 $gender = strtolower(trim($employee["gender"] ?? ""));
 $profile_picture = trim($employee["profile_picture"] ?? "");
 
-$date_of_joining = date(
-    "d-m-Y",
-    strtotime($employee["joining_date"])
-);
+$date_of_joining = !empty($employee["joining_date"])
+    ? date("d-m-Y", strtotime($employee["joining_date"]))
+    : "";
 
 
 /* =========================================================
@@ -98,22 +97,21 @@ $stmt = $conn->prepare("
     FROM leave_balances lb
     INNER JOIN leave_types lt
         ON lb.leave_type_id = lt.id
-    WHERE lb.employee_id = ?
+    WHERE lb.employee_id = :employee_id
       AND lt.code = 'CL'
       AND lb.year = YEAR(CURDATE())
     LIMIT 1
 ");
 
-$stmt->bind_param("i", $employee_db_id);
-$stmt->execute();
+$stmt->execute([
+    ":employee_id" => $employee_db_id
+]);
 
-$row = $stmt->get_result()->fetch_assoc();
+$row = $stmt->fetch();
 
 if ($row) {
     $cl_balance = (float)$row["closing_balance"];
 }
-
-$stmt->close();
 
 
 /* ---------------- EL ---------------- */
@@ -123,22 +121,21 @@ $stmt = $conn->prepare("
     FROM leave_balances lb
     INNER JOIN leave_types lt
         ON lb.leave_type_id = lt.id
-    WHERE lb.employee_id = ?
+    WHERE lb.employee_id = :employee_id
       AND lt.code = 'EL'
       AND lb.year = YEAR(CURDATE())
     LIMIT 1
 ");
 
-$stmt->bind_param("i", $employee_db_id);
-$stmt->execute();
+$stmt->execute([
+    ":employee_id" => $employee_db_id
+]);
 
-$row = $stmt->get_result()->fetch_assoc();
+$row = $stmt->fetch();
 
 if ($row) {
     $el_balance = (float)$row["closing_balance"];
 }
-
-$stmt->close();
 
 
 /* ---------------- HPL ---------------- */
@@ -148,22 +145,21 @@ $stmt = $conn->prepare("
     FROM leave_balances lb
     INNER JOIN leave_types lt
         ON lb.leave_type_id = lt.id
-    WHERE lb.employee_id = ?
+    WHERE lb.employee_id = :employee_id
       AND lt.code = 'HPL'
       AND lb.year = YEAR(CURDATE())
     LIMIT 1
 ");
 
-$stmt->bind_param("i", $employee_db_id);
-$stmt->execute();
+$stmt->execute([
+    ":employee_id" => $employee_db_id
+]);
 
-$row = $stmt->get_result()->fetch_assoc();
+$row = $stmt->fetch();
 
 if ($row) {
     $hpl_balance = (float)$row["closing_balance"];
 }
-
-$stmt->close();
 
 
 /* =========================================================
@@ -177,20 +173,19 @@ $stmt = $conn->prepare("
     FROM leave_records lr
     INNER JOIN leave_types lt
         ON lr.leave_type_id = lt.id
-    WHERE lr.employee_id = ?
+    WHERE lr.employee_id = :employee_id
       AND lt.code = 'LWA'
 ");
 
-$stmt->bind_param("i", $employee_db_id);
-$stmt->execute();
+$stmt->execute([
+    ":employee_id" => $employee_db_id
+]);
 
-$row = $stmt->get_result()->fetch_assoc();
+$row = $stmt->fetch();
 
 if ($row) {
     $lwa_taken = (float)$row["total"];
 }
-
-$stmt->close();
 
 
 /* =========================================================
@@ -204,20 +199,19 @@ $stmt = $conn->prepare("
     FROM leave_records lr
     INNER JOIN leave_types lt
         ON lr.leave_type_id = lt.id
-    WHERE lr.employee_id = ?
+    WHERE lr.employee_id = :employee_id
       AND lt.code = 'COM'
 ");
 
-$stmt->bind_param("i", $employee_db_id);
-$stmt->execute();
+$stmt->execute([
+    ":employee_id" => $employee_db_id
+]);
 
-$row = $stmt->get_result()->fetch_assoc();
+$row = $stmt->fetch();
 
 if ($row) {
     $com_taken = (float)$row["total"];
 }
-
-$stmt->close();
 
 
 /* =========================================================
@@ -231,20 +225,19 @@ $stmt = $conn->prepare("
     FROM leave_records lr
     INNER JOIN leave_types lt
         ON lr.leave_type_id = lt.id
-    WHERE lr.employee_id = ?
+    WHERE lr.employee_id = :employee_id
       AND lt.code = 'SCL'
 ");
 
-$stmt->bind_param("i", $employee_db_id);
-$stmt->execute();
+$stmt->execute([
+    ":employee_id" => $employee_db_id
+]);
 
-$row = $stmt->get_result()->fetch_assoc();
+$row = $stmt->fetch();
 
 if ($row) {
     $scl_taken = (float)$row["total"];
 }
-
-$stmt->close();
 
 
 /* =========================================================
@@ -256,35 +249,39 @@ $pl_taken = 0;
 
 $stmt = $conn->prepare("
     SELECT
-        COALESCE(SUM(CASE WHEN lt.code = 'ML' THEN lr.days_taken ELSE 0 END), 0) AS ml_total,
-        COALESCE(SUM(CASE WHEN lt.code = 'PL' THEN lr.days_taken ELSE 0 END), 0) AS pl_total
+        COALESCE(
+            SUM(CASE WHEN lt.code = 'ML' THEN lr.days_taken ELSE 0 END),
+            0
+        ) AS ml_total,
+
+        COALESCE(
+            SUM(CASE WHEN lt.code = 'PL' THEN lr.days_taken ELSE 0 END),
+            0
+        ) AS pl_total
+
     FROM leave_records lr
-    INNER JOIN leave_types lt ON lr.leave_type_id = lt.id
-    WHERE lr.employee_id = ? AND lt.code IN ('ML', 'PL')
+
+    INNER JOIN leave_types lt
+        ON lr.leave_type_id = lt.id
+
+    WHERE lr.employee_id = :employee_id
+      AND lt.code IN ('ML', 'PL')
 ");
-$stmt->bind_param("i", $employee_db_id);
-$stmt->execute();
-$row = $stmt->get_result()->fetch_assoc();
+
+$stmt->execute([
+    ":employee_id" => $employee_db_id
+]);
+
+$row = $stmt->fetch();
+
 if ($row) {
     $ml_taken = (float)$row["ml_total"];
     $pl_taken = (float)$row["pl_total"];
 }
-$stmt->close();
 
 
 /* =========================================================
    LOAD EMPLOYEE LEAVE RECORDS
-   ONLY FOR THIS EMPLOYEE
-
-   Each leave record is expanded day-by-day.
-
-   Example:
-   27-09-2026 to 29-09-2026
-
-   Calendar:
-   27
-   28
-   29
 ========================================================= */
 
 $leave_calendar = [];
@@ -301,23 +298,26 @@ $stmt = $conn->prepare("
         lt.code,
         lt.name
     FROM leave_records lr
+
     INNER JOIN leave_types lt
         ON lr.leave_type_id = lt.id
-    WHERE lr.employee_id = ?
+
+    WHERE lr.employee_id = :employee_id
+
     ORDER BY lr.from_date ASC, lr.id ASC
 ");
 
-$stmt->bind_param("i", $employee_db_id);
-$stmt->execute();
+$stmt->execute([
+    ":employee_id" => $employee_db_id
+]);
 
-$result = $stmt->get_result();
+$leave_records = $stmt->fetchAll();
 
-while ($row = $result->fetch_assoc()) {
+foreach ($leave_records as $row) {
 
     $from_date = new DateTime($row["from_date"]);
     $to_date = new DateTime($row["to_date"]);
 
-    /* Include ending date */
     $to_date_inclusive = clone $to_date;
     $to_date_inclusive->modify("+1 day");
 
@@ -331,9 +331,6 @@ while ($row = $result->fetch_assoc()) {
     foreach ($period as $date) {
 
         $date_key = $date->format("Y-m-d");
-
-
-        /* Leave type → CSS class */
 
         $leave_class = "casual";
 
@@ -400,15 +397,9 @@ while ($row = $result->fetch_assoc()) {
     }
 }
 
-$stmt->close();
-
 
 /* =========================================================
    LOAD HOLIDAYS FROM DATABASE
-
-   Includes:
-   1. Imported holidays
-   2. Holidays manually added by admin
 ========================================================= */
 
 $holiday_calendar = [];
@@ -426,23 +417,23 @@ $holiday_query = "
 
 $holiday_result = $conn->query($holiday_query);
 
-if ($holiday_result) {
+$holiday_records = $holiday_result->fetchAll();
 
-    while ($holiday = $holiday_result->fetch_assoc()) {
+foreach ($holiday_records as $holiday) {
 
-        $date_key = $holiday["holiday_date"];
+    $date_key = $holiday["holiday_date"];
 
-        $holiday_calendar[$date_key] = [
+    $holiday_calendar[$date_key] = [
 
-            "description" => $holiday["description"],
+        "description" => $holiday["description"],
 
-            "day" => $holiday["day"],
+        "day" => $holiday["day"],
 
-            "source_type" => $holiday["source_type"]
+        "source_type" => $holiday["source_type"]
 
-        ];
-    }
+    ];
 }
+
 
 /* =========================================================
    CONVERT DATABASE DATA TO JSON
@@ -471,8 +462,6 @@ $holiday_json = json_encode(
 
 /* =========================================================
    EL SURRENDER HISTORY
-
-   Latest request appears first.
 ========================================================= */
 
 $el_surrender_history = [];
@@ -485,21 +474,16 @@ $stmt = $conn->prepare("
         status,
         remarks
     FROM el_surrender
-    WHERE employee_id = ?
+    WHERE employee_id = :employee_id
     ORDER BY surrender_date DESC, id DESC
     LIMIT 5
 ");
 
-$stmt->bind_param("i", $employee_db_id);
-$stmt->execute();
+$stmt->execute([
+    ":employee_id" => $employee_db_id
+]);
 
-$result = $stmt->get_result();
-
-while ($row = $result->fetch_assoc()) {
-    $el_surrender_history[] = $row;
-}
-
-$stmt->close();
+$el_surrender_history = $stmt->fetchAll();
 
 
 /* =========================================================
