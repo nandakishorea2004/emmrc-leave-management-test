@@ -1,8 +1,9 @@
+
 <?php
 
 session_start();
 
-require_once "../db.php";
+require_once __DIR__ . "/../db.php";
 
 
 /* =========================================================
@@ -16,7 +17,7 @@ if (!isset($_SESSION["role"]) || $_SESSION["role"] !== "admin") {
 
 
 /* =========================================================
-   SUMMARY DATA FROM DATABASE
+   SUMMARY DATA FROM DATABASE - PDO
 ========================================================= */
 
 
@@ -34,13 +35,9 @@ $stmt = $conn->prepare("
 
 $stmt->execute();
 
-$result = $stmt->get_result();
-
-$row = $result->fetch_assoc();
+$row = $stmt->fetch();
 
 $total_employees = (int)($row["total"] ?? 0);
-
-$stmt->close();
 
 
 /* =========================================================
@@ -57,13 +54,9 @@ $stmt = $conn->prepare("
 
 $stmt->execute();
 
-$result = $stmt->get_result();
-
-$row = $result->fetch_assoc();
+$row = $stmt->fetch();
 
 $on_leave_today = (int)($row["total"] ?? 0);
-
-$stmt->close();
 
 
 /* =========================================================
@@ -79,13 +72,9 @@ $stmt = $conn->prepare("
 
 $stmt->execute();
 
-$result = $stmt->get_result();
-
-$row = $result->fetch_assoc();
+$row = $stmt->fetch();
 
 $total_leave_records = (int)($row["total"] ?? 0);
-
-$stmt->close();
 
 
 /* =========================================================
@@ -102,13 +91,9 @@ $stmt = $conn->prepare("
 
 $stmt->execute();
 
-$result = $stmt->get_result();
-
-$row = $result->fetch_assoc();
+$row = $stmt->fetch();
 
 $pending_surrender_count = (int)($row["total"] ?? 0);
-
-$stmt->close();
 
 
 /* =========================================================
@@ -145,15 +130,7 @@ $stmt = $conn->prepare("
 
 $stmt->execute();
 
-$result = $stmt->get_result();
-
-while ($row = $result->fetch_assoc()) {
-
-    $recent_leave_records[] = $row;
-
-}
-
-$stmt->close();
+$recent_leave_records = $stmt->fetchAll();
 
 
 /* =========================================================
@@ -176,20 +153,11 @@ $stmt = $conn->prepare("
 
 $stmt->execute();
 
-$result = $stmt->get_result();
-
-while ($row = $result->fetch_assoc()) {
-
-    $upcoming_holidays[] = $row;
-
-}
-
-$stmt->close();
+$upcoming_holidays = $stmt->fetchAll();
 
 
 /* =========================================================
    RECENT ACTIVITIES
-   ALL VALUES COME FROM MYSQL
 ========================================================= */
 
 $recent_activities = [];
@@ -222,15 +190,7 @@ $stmt = $conn->prepare("
 
 $stmt->execute();
 
-$result = $stmt->get_result();
-
-while ($row = $result->fetch_assoc()) {
-
-    $recent_activities[] = $row;
-
-}
-
-$stmt->close();
+$recent_activities = $stmt->fetchAll();
 
 ?>
 
@@ -257,147 +217,78 @@ $stmt->close();
 
     <style>
 
-        /* =================================================
-           EL SURRENDER SUMMARY CARD
-        ================================================= */
-
         .surrender-summary {
             cursor: pointer;
         }
 
-
         .surrender-summary-link {
-
             text-decoration: none;
-
             color: inherit;
-
             display: flex;
-
             align-items: center;
-
             gap: 14px;
-
             width: 100%;
-
         }
-
 
         .surrender-summary-link > div:last-child {
             flex: 1;
         }
 
-
         .surrender-summary:hover {
             transform: translateY(-2px);
         }
 
-
         .surrender-summary .summary-icon {
-
             background: #f0e9ff;
-
             color: #7048c8;
-
         }
-
 
         .surrender-summary strong {
             color: #7048c8;
         }
 
-
-        /* =================================================
-           KEEP FOUR SUMMARY CARDS IN ONE ROW
-        ================================================= */
-
         @media (min-width: 1100px) {
-
             .admin-summary {
-
-                grid-template-columns:
-                    repeat(4, minmax(0, 1fr));
-
+                grid-template-columns: repeat(4, minmax(0, 1fr));
             }
-
         }
-
-
-        /* =================================================
-           TABLET
-        ================================================= */
 
         @media (min-width: 700px) and (max-width: 1099px) {
-
             .admin-summary {
-
-                grid-template-columns:
-                    repeat(2, minmax(0, 1fr));
-
+                grid-template-columns: repeat(2, minmax(0, 1fr));
             }
-
         }
-
-
-        /* =================================================
-           MOBILE
-        ================================================= */
 
         @media (max-width: 699px) {
-
             .admin-summary {
-
-                grid-template-columns:
-                    1fr;
-
+                grid-template-columns: 1fr;
             }
-
         }
-
-
-        /* =================================================
-           RECENT ACTIVITY DETAILS
-        ================================================= */
 
         .activity-item p {
-
             margin: 3px 0;
-
         }
-
 
         .activity-leave-details {
-
             margin-top: 4px;
-
             font-size: 13px;
-
             color: #66758a;
-
             line-height: 1.6;
-
         }
-
 
         .activity-leave-details strong {
-
             color: #314563;
-
         }
 
-
         .activity-item small {
-
             display: block;
-
             margin-top: 4px;
-
         }
 
     </style>
 
-
     <link rel="stylesheet" href="../css/responsive.css?v=1">
+
 </head>
 
 
@@ -421,19 +312,13 @@ $stmt->close();
 
         </div>
 
-
         <div class="admin-brand-divider"></div>
-
 
         <div class="admin-brand-text">
 
-            <strong>
-                Leave Management
-            </strong>
+            <strong>Leave Management</strong>
 
-            <span>
-                Admin Portal
-            </span>
+            <span>Admin Portal</span>
 
         </div>
 
@@ -446,19 +331,13 @@ $stmt->close();
             A
         </div>
 
-
         <div class="admin-user-details">
 
-            <strong>
-                Admin
-            </strong>
+            <strong>Admin</strong>
 
-            <span>
-                Administrator
-            </span>
+            <span>Administrator</span>
 
         </div>
-
 
         <a
             href="../login.php?action=logout"
@@ -480,17 +359,13 @@ $stmt->close();
 <main class="admin-container">
 
 
-    <!-- =====================================================
-         WELCOME SECTION
-    ====================================================== -->
+    <!-- WELCOME SECTION -->
 
     <section class="admin-welcome">
 
         <div>
 
-            <h1>
-                Welcome, Admin
-            </h1>
+            <h1>Welcome, Admin</h1>
 
             <p>
                 Manage employee leave records and leave accounts.
@@ -506,16 +381,12 @@ $stmt->close();
 
 
 
-    <!-- =====================================================
-         SUMMARY CARDS
-    ====================================================== -->
+    <!-- SUMMARY CARDS -->
 
     <section class="admin-summary">
 
 
-        <!-- =================================================
-             TOTAL EMPLOYEES
-        ================================================== -->
+        <!-- TOTAL EMPLOYEES -->
 
         <div class="admin-summary-card employees-summary">
 
@@ -525,17 +396,13 @@ $stmt->close();
 
             <div>
 
-                <span>
-                    Total Employees
-                </span>
+                <span>Total Employees</span>
 
                 <strong>
                     <?php echo $total_employees; ?>
                 </strong>
 
-                <small>
-                    Registered employees
-                </small>
+                <small>Registered employees</small>
 
             </div>
 
@@ -543,9 +410,7 @@ $stmt->close();
 
 
 
-        <!-- =================================================
-             ON LEAVE TODAY
-        ================================================== -->
+        <!-- ON LEAVE TODAY -->
 
         <div class="admin-summary-card leave-summary">
 
@@ -555,17 +420,13 @@ $stmt->close();
 
             <div>
 
-                <span>
-                    On Leave Today
-                </span>
+                <span>On Leave Today</span>
 
                 <strong>
                     <?php echo $on_leave_today; ?>
                 </strong>
 
-                <small>
-                    Employees currently on leave
-                </small>
+                <small>Employees currently on leave</small>
 
             </div>
 
@@ -573,9 +434,7 @@ $stmt->close();
 
 
 
-        <!-- =================================================
-             LEAVE RECORDS
-        ================================================== -->
+        <!-- LEAVE RECORDS -->
 
         <div class="admin-summary-card records-summary">
 
@@ -585,17 +444,13 @@ $stmt->close();
 
             <div>
 
-                <span>
-                    Leave Records
-                </span>
+                <span>Leave Records</span>
 
                 <strong>
                     <?php echo $total_leave_records; ?>
                 </strong>
 
-                <small>
-                    Total records entered
-                </small>
+                <small>Total records entered</small>
 
             </div>
 
@@ -603,9 +458,7 @@ $stmt->close();
 
 
 
-        <!-- =================================================
-             EL SURRENDER
-        ================================================== -->
+        <!-- EL SURRENDER -->
 
         <div
             class="admin-summary-card surrender-summary"
@@ -627,22 +480,15 @@ $stmt->close();
                     ↻
                 </div>
 
-
                 <div>
 
-                    <span>
-                        EL Surrender
-                    </span>
+                    <span>EL Surrender</span>
 
                     <strong>
-                        <?php
-                        echo $pending_surrender_count;
-                        ?>
+                        <?php echo $pending_surrender_count; ?>
                     </strong>
 
-                    <small>
-                        Requests to review
-                    </small>
+                    <small>Requests to review</small>
 
                 </div>
 
@@ -655,24 +501,19 @@ $stmt->close();
 
 
 
-    <!-- =====================================================
-         SEARCH EMPLOYEE
-    ====================================================== -->
+    <!-- SEARCH EMPLOYEE -->
 
     <section class="admin-search-card">
 
         <div class="admin-search-title">
 
-            <h2>
-                Search Employee
-            </h2>
+            <h2>Search Employee</h2>
 
             <p>
                 Search by Employee ID or employee name.
             </p>
 
         </div>
-
 
         <form
             class="admin-search-box"
@@ -696,16 +537,12 @@ $stmt->close();
 
 
 
-    <!-- =====================================================
-         MAIN GRID
-    ====================================================== -->
+    <!-- MAIN GRID -->
 
     <section class="admin-main-grid">
 
 
-        <!-- =================================================
-             RECENT LEAVE RECORDS
-        ================================================== -->
+        <!-- RECENT LEAVE RECORDS -->
 
         <div class="admin-records-card">
 
@@ -713,16 +550,13 @@ $stmt->close();
 
                 <div>
 
-                    <h2>
-                        Recent Leave Records
-                    </h2>
+                    <h2>Recent Leave Records</h2>
 
                     <p>
                         Recently entered employee leave details.
                     </p>
 
                 </div>
-
 
                 <a
                     href="leave_records.php"
@@ -749,33 +583,13 @@ $stmt->close();
 
                         <tr>
 
-                            <th>
-                                Employee
-                            </th>
-
-                            <th>
-                                Employee ID
-                            </th>
-
-                            <th>
-                                Leave Type
-                            </th>
-
-                            <th>
-                                From
-                            </th>
-
-                            <th>
-                                To
-                            </th>
-
-                            <th>
-                                Days
-                            </th>
-
-                            <th>
-                                Action
-                            </th>
+                            <th>Employee</th>
+                            <th>Employee ID</th>
+                            <th>Leave Type</th>
+                            <th>From</th>
+                            <th>To</th>
+                            <th>Days</th>
+                            <th>Action</th>
 
                         </tr>
 
@@ -783,7 +597,6 @@ $stmt->close();
 
 
                     <tbody>
-
 
                     <?php if (empty($recent_leave_records)): ?>
 
@@ -797,32 +610,20 @@ $stmt->close();
                                     color:#7b8799;
                                 "
                             >
-
                                 No leave records found.
-
                             </td>
 
                         </tr>
 
-
                     <?php else: ?>
 
-
-                        <?php foreach (
-                            $recent_leave_records
-                            as $record
-                        ): ?>
-
+                        <?php foreach ($recent_leave_records as $record): ?>
 
                             <?php
 
                             $badge_class = "casual";
 
-                            switch (
-                                strtoupper(
-                                    $record["leave_code"]
-                                )
-                            ) {
+                            switch (strtoupper($record["leave_code"])) {
 
                                 case "EL":
                                     $badge_class = "earned";
@@ -853,44 +654,27 @@ $stmt->close();
 
                             ?>
 
-
                             <tr>
 
-
-                                <!-- EMPLOYEE -->
-
                                 <td>
-
                                     <?php
                                     echo htmlspecialchars(
                                         $record["employee_name"]
                                     );
                                     ?>
-
                                 </td>
 
-
-                                <!-- EMPLOYEE ID -->
-
                                 <td>
-
                                     <?php
                                     echo htmlspecialchars(
-                                        $record["employee_id"]
+                                        (string)$record["employee_id"]
                                     );
                                     ?>
-
                                 </td>
-
-
-                                <!-- LEAVE TYPE -->
 
                                 <td>
 
-                                    <span
-                                        class="leave-badge
-                                        <?php echo $badge_class; ?>"
-                                    >
+                                    <span class="leave-badge <?php echo htmlspecialchars($badge_class); ?>">
 
                                         <?php
                                         echo htmlspecialchars(
@@ -902,62 +686,36 @@ $stmt->close();
 
                                 </td>
 
-
-                                <!-- FROM -->
-
                                 <td>
-
                                     <?php
                                     echo date(
                                         "d-m-Y",
-                                        strtotime(
-                                            $record["from_date"]
-                                        )
+                                        strtotime($record["from_date"])
                                     );
                                     ?>
-
                                 </td>
 
-
-                                <!-- TO -->
-
                                 <td>
-
                                     <?php
                                     echo date(
                                         "d-m-Y",
-                                        strtotime(
-                                            $record["to_date"]
-                                        )
+                                        strtotime($record["to_date"])
                                     );
                                     ?>
-
                                 </td>
 
-
-                                <!-- DAYS -->
-
                                 <td>
-
                                     <?php
                                     echo htmlspecialchars(
-                                        $record["days_taken"]
+                                        (string)$record["days_taken"]
                                     );
                                     ?>
-
                                 </td>
-
-
-                                <!-- ACTION -->
 
                                 <td>
 
                                     <a
-                                        href="../leave_history.php?id=<?php
-                                            echo urlencode(
-                                                $record["employee_id"]
-                                            );
-                                        ?>&from=admin"
+                                        href="../leave_history.php?id=<?php echo urlencode((string)$record["employee_id"]); ?>&from=admin"
                                         class="table-view-button"
                                         style="
                                             text-decoration:none;
@@ -977,15 +735,11 @@ $stmt->close();
 
                                 </td>
 
-
                             </tr>
-
 
                         <?php endforeach; ?>
 
-
                     <?php endif; ?>
-
 
                     </tbody>
 
@@ -997,9 +751,7 @@ $stmt->close();
 
 
 
-        <!-- =================================================
-             QUICK ACTIONS
-        ================================================== -->
+        <!-- QUICK ACTIONS -->
 
         <div class="admin-actions-card">
 
@@ -1007,9 +759,7 @@ $stmt->close();
 
                 <div>
 
-                    <h2>
-                        Quick Actions
-                    </h2>
+                    <h2>Quick Actions</h2>
 
                     <p>
                         Common administrative actions.
@@ -1023,8 +773,6 @@ $stmt->close();
             <div class="admin-actions-list">
 
 
-                <!-- ENTER LEAVE -->
-
                 <a
                     href="enter_leave.php"
                     class="admin-action-button enter-leave"
@@ -1037,23 +785,12 @@ $stmt->close();
                     "
                 >
 
-                    <span class="action-icon">
-                        📅
-                    </span>
-
-                    <span>
-                        Enter Leave
-                    </span>
-
-                    <strong>
-                        ›
-                    </strong>
+                    <span class="action-icon">📅</span>
+                    <span>Enter Leave</span>
+                    <strong>›</strong>
 
                 </a>
 
-
-
-                <!-- MANAGE EMPLOYEES -->
 
                 <a
                     href="employees.php"
@@ -1067,23 +804,12 @@ $stmt->close();
                     "
                 >
 
-                    <span class="action-icon">
-                        👥
-                    </span>
-
-                    <span>
-                        Manage Employees
-                    </span>
-
-                    <strong>
-                        ›
-                    </strong>
+                    <span class="action-icon">👥</span>
+                    <span>Manage Employees</span>
+                    <strong>›</strong>
 
                 </a>
 
-
-
-                <!-- MANAGE HOLIDAYS -->
 
                 <a
                     href="manage_holidays.php"
@@ -1097,23 +823,12 @@ $stmt->close();
                     "
                 >
 
-                    <span class="action-icon">
-                        🗓
-                    </span>
-
-                    <span>
-                        Manage Holidays
-                    </span>
-
-                    <strong>
-                        ›
-                    </strong>
+                    <span class="action-icon">🗓</span>
+                    <span>Manage Holidays</span>
+                    <strong>›</strong>
 
                 </a>
 
-
-
-                <!-- EL SURRENDER APPROVAL -->
 
                 <a
                     href="el_surrender_approval.php"
@@ -1127,23 +842,12 @@ $stmt->close();
                     "
                 >
 
-                    <span class="action-icon">
-                        ↻
-                    </span>
-
-                    <span>
-                        EL Surrender Approval
-                    </span>
-
-                    <strong>
-                        ›
-                    </strong>
+                    <span class="action-icon">↻</span>
+                    <span>EL Surrender Approval</span>
+                    <strong>›</strong>
 
                 </a>
 
-
-
-                <!-- VIEW REPORTS -->
 
                 <a
                     href="leave_records.php"
@@ -1157,22 +861,12 @@ $stmt->close();
                     "
                 >
 
-                    <span class="action-icon">
-                        📊
-                    </span>
-
-                    <span>
-                        View Reports
-                    </span>
-
-                    <strong>
-                        ›
-                    </strong>
+                    <span class="action-icon">📊</span>
+                    <span>View Reports</span>
+                    <strong>›</strong>
 
                 </a>
 
-
-                <!-- LEAVE SETTINGS -->
 
                 <a
                     href="leave_settings.php"
@@ -1186,17 +880,9 @@ $stmt->close();
                     "
                 >
 
-                    <span class="action-icon">
-                        ⚙️
-                    </span>
-
-                    <span>
-                        Leave Settings
-                    </span>
-
-                    <strong>
-                        ›
-                    </strong>
+                    <span class="action-icon">⚙️</span>
+                    <span>Leave Settings</span>
+                    <strong>›</strong>
 
                 </a>
 
@@ -1210,16 +896,12 @@ $stmt->close();
 
 
 
-    <!-- =====================================================
-         BOTTOM SECTION
-    ====================================================== -->
+    <!-- BOTTOM SECTION -->
 
     <section class="admin-bottom-grid">
 
 
-        <!-- =================================================
-             UPCOMING HOLIDAYS
-        ================================================== -->
+        <!-- UPCOMING HOLIDAYS -->
 
         <div class="admin-info-card">
 
@@ -1227,9 +909,7 @@ $stmt->close();
 
                 <div>
 
-                    <h2>
-                        Upcoming Holidays
-                    </h2>
+                    <h2>Upcoming Holidays</h2>
 
                     <p>
                         Government and common holidays.
@@ -1241,7 +921,6 @@ $stmt->close();
 
 
             <div class="holiday-list">
-
 
             <?php if (empty($upcoming_holidays)): ?>
 
@@ -1257,56 +936,38 @@ $stmt->close();
 
             <?php else: ?>
 
-
-                <?php foreach (
-                    $upcoming_holidays
-                    as $holiday
-                ): ?>
-
+                <?php foreach ($upcoming_holidays as $holiday): ?>
 
                     <?php
 
-                    $holiday_timestamp =
-                        strtotime(
-                            $holiday["holiday_date"]
-                        );
+                    $holiday_timestamp = strtotime(
+                        $holiday["holiday_date"]
+                    );
 
-                    $holiday_day =
-                        date(
-                            "d",
-                            $holiday_timestamp
-                        );
+                    $holiday_day = date(
+                        "d",
+                        $holiday_timestamp
+                    );
 
-                    $holiday_month =
-                        strtoupper(
-                            date(
-                                "M",
-                                $holiday_timestamp
-                            )
-                        );
+                    $holiday_month = strtoupper(
+                        date("M", $holiday_timestamp)
+                    );
 
                     ?>
 
-
                     <div class="holiday-item">
-
 
                         <div class="holiday-date">
 
                             <strong>
-                                <?php
-                                echo $holiday_day;
-                                ?>
+                                <?php echo $holiday_day; ?>
                             </strong>
 
                             <span>
-                                <?php
-                                echo $holiday_month;
-                                ?>
+                                <?php echo $holiday_month; ?>
                             </span>
 
                         </div>
-
 
                         <div>
 
@@ -1318,21 +979,15 @@ $stmt->close();
                                 ?>
                             </strong>
 
-                            <span>
-                                Public Holiday
-                            </span>
+                            <span>Public Holiday</span>
 
                         </div>
 
-
                     </div>
-
 
                 <?php endforeach; ?>
 
-
             <?php endif; ?>
-
 
             </div>
 
@@ -1340,9 +995,7 @@ $stmt->close();
 
 
 
-        <!-- =================================================
-             RECENT ACTIVITY
-        ================================================== -->
+        <!-- RECENT ACTIVITY -->
 
         <div class="admin-info-card">
 
@@ -1350,9 +1003,7 @@ $stmt->close();
 
                 <div>
 
-                    <h2>
-                        Recent Activities
-                    </h2>
+                    <h2>Recent Activities</h2>
 
                     <p>
                         Latest leave-related activity.
@@ -1364,7 +1015,6 @@ $stmt->close();
 
 
             <div class="activity-list">
-
 
             <?php if (empty($recent_activities)): ?>
 
@@ -1380,34 +1030,15 @@ $stmt->close();
 
             <?php else: ?>
 
-
-                <?php foreach (
-                    $recent_activities
-                    as $activity
-                ): ?>
-
+                <?php foreach ($recent_activities as $activity): ?>
 
                     <div class="activity-item">
 
-                        <span
-                            class="activity-dot"
-                        ></span>
-
+                        <span class="activity-dot"></span>
 
                         <div>
 
-                            <!-- =================================
-                                 ACTIVITY TITLE
-                            ================================== -->
-
-                            <strong>
-                                Leave record added
-                            </strong>
-
-
-                            <!-- =================================
-                                 EMPLOYEE NAME + ID
-                            ================================== -->
+                            <strong>Leave record added</strong>
 
                             <p>
 
@@ -1423,25 +1054,21 @@ $stmt->close();
                                         font-size:12px;
                                     "
                                 >
+
                                     (
                                     <?php
                                     echo htmlspecialchars(
-                                        $activity["employee_id"]
+                                        (string)$activity["employee_id"]
                                     );
                                     ?>
                                     )
+
                                 </span>
 
                             </p>
 
 
-                            <!-- =================================
-                                 LEAVE DETAILS FROM MYSQL
-                            ================================== -->
-
-                            <div
-                                class="activity-leave-details"
-                            >
+                            <div class="activity-leave-details">
 
                                 <strong>
                                     <?php
@@ -1455,7 +1082,7 @@ $stmt->close();
 
                                 <?php
                                 echo htmlspecialchars(
-                                    $activity["days_taken"]
+                                    (string)$activity["days_taken"]
                                 );
                                 ?>
 
@@ -1469,13 +1096,10 @@ $stmt->close();
 
                                 <br>
 
-
                                 <?php
                                 echo date(
                                     "d-m-Y",
-                                    strtotime(
-                                        $activity["from_date"]
-                                    )
+                                    strtotime($activity["from_date"])
                                 );
                                 ?>
 
@@ -1484,27 +1108,19 @@ $stmt->close();
                                 <?php
                                 echo date(
                                     "d-m-Y",
-                                    strtotime(
-                                        $activity["to_date"]
-                                    )
+                                    strtotime($activity["to_date"])
                                 );
                                 ?>
 
                             </div>
 
 
-                            <!-- =================================
-                                 CREATED DATE/TIME FROM MYSQL
-                            ================================== -->
-
                             <small>
 
                                 <?php
                                 echo date(
                                     "d M Y, h:i A",
-                                    strtotime(
-                                        $activity["created_at"]
-                                    )
+                                    strtotime($activity["created_at"])
                                 );
                                 ?>
 
@@ -1514,12 +1130,9 @@ $stmt->close();
 
                     </div>
 
-
                 <?php endforeach; ?>
 
-
             <?php endif; ?>
-
 
             </div>
 
@@ -1545,10 +1158,6 @@ $stmt->close();
         "admin_dashboard_scroll_position";
 
 
-    /* =====================================================
-       SAVE CURRENT SCROLL POSITION
-    ===================================================== */
-
     function saveScrollPosition() {
 
         sessionStorage.setItem(
@@ -1559,30 +1168,19 @@ $stmt->close();
     }
 
 
-    /* =====================================================
-       SAVE BEFORE LEAVING PAGE
-    ===================================================== */
-
     window.addEventListener(
         "beforeunload",
         function () {
-
             saveScrollPosition();
-
         }
     );
 
-
-    /* =====================================================
-       SAVE WHEN CLICKING LINKS
-    ===================================================== */
 
     document.addEventListener(
         "click",
         function (event) {
 
-            const link =
-                event.target.closest("a");
+            const link = event.target.closest("a");
 
             if (!link) {
                 return;
@@ -1594,18 +1192,12 @@ $stmt->close();
     );
 
 
-    /* =====================================================
-       RESTORE SCROLL POSITION
-    ===================================================== */
-
     window.addEventListener(
         "load",
         function () {
 
             const savedPosition =
-                sessionStorage.getItem(
-                    storageKey
-                );
+                sessionStorage.getItem(storageKey);
 
             if (
                 savedPosition !== null &&
@@ -1617,10 +1209,7 @@ $stmt->close();
 
                         window.scrollTo(
                             0,
-                            parseInt(
-                                savedPosition,
-                                10
-                            )
+                            parseInt(savedPosition, 10)
                         );
 
                     },
