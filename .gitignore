@@ -1,0 +1,26 @@
+# Database credentials
+db.php
+.env
+
+# Database backups
+*.sql
+*.sql.zip
+
+# Employee profile photos
+uploads/employee_photos/*
+!uploads/employee_photos/.gitkeep
+
+# Temporary and log files
+*.log
+*.tmp
+
+# Operating system files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Development testing scripts
+test_calculate_el.php
+test_calculate_el.php
+
+!uploads/employee_photos/.htaccess

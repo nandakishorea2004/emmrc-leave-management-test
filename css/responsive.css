@@ -1,0 +1,485 @@
+/* EMMRC responsive compatibility layer - presentation only */
+/* =========================================================
+   RESPONSIVE FINISHING LAYER
+   Applies across admin, employee, reports and utility pages.
+   This layer intentionally changes presentation only.
+========================================================= */
+
+html {
+    width: 100%;
+    min-height: 100%;
+    overflow-x: clip;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+}
+
+body {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: clip;
+}
+
+img,
+svg,
+video,
+canvas {
+    max-width: 100%;
+}
+
+input,
+select,
+textarea,
+button {
+    max-width: 100%;
+    font: inherit;
+}
+
+input,
+select,
+textarea {
+    min-width: 0;
+}
+
+button,
+a,
+input[type="button"],
+input[type="submit"] {
+    touch-action: manipulation;
+}
+
+/* Data tables remain readable and scroll inside their own region. */
+.admin-table-wrapper,
+.employee-table-wrapper,
+.profile-table-wrapper,
+.records-table-wrapper,
+.table-responsive,
+.table-wrapper,
+.leave-table-wrapper,
+.surrender-table-wrapper {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: visible;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+}
+
+.admin-table,
+.employee-table,
+.profile-table,
+.records-table {
+    max-width: 100%;
+}
+
+/* Prevent long names, IDs and generated content from widening cards. */
+.admin-container,
+.dashboard-container,
+.records-container,
+.settings-page,
+.card,
+.admin-summary-card,
+.employee-info-card,
+.employee-table-card,
+.records-card,
+.enter-leave-card,
+.add-employee-card {
+    min-width: 0;
+    max-width: 100%;
+}
+
+/* Keep common form controls usable on touch devices. */
+input:not([type="checkbox"]):not([type="radio"]),
+select,
+textarea {
+    max-width: 100%;
+}
+
+@media (max-width: 1024px) {
+    .admin-header {
+        padding-left: 22px !important;
+        padding-right: 22px !important;
+    }
+
+    .admin-container {
+        width: calc(100% - 36px);
+    }
+
+    .dashboard-header {
+        padding-left: 22px;
+        padding-right: 22px;
+    }
+
+    .dashboard-container {
+        padding-left: 22px;
+        padding-right: 22px;
+    }
+
+    .records-container {
+        width: calc(100% - 36px);
+    }
+}
+
+@media (max-width: 768px) {
+    body {
+        min-width: 320px;
+    }
+
+    .admin-header {
+        position: relative;
+        min-height: 64px;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+
+    .admin-brand {
+        min-width: 0;
+        gap: 10px;
+    }
+
+    .admin-logo,
+    .admin-logo img {
+        width: 118px;
+        max-width: 118px;
+    }
+
+    .admin-brand-divider {
+        height: 30px;
+    }
+
+    .admin-user {
+        margin-left: auto;
+        min-width: 0;
+        gap: 8px;
+    }
+
+    .admin-logout {
+        margin-left: 4px;
+        padding: 9px 10px;
+        border-radius: 7px;
+        background: #f0f3f9;
+    }
+
+    .admin-summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .admin-welcome {
+        gap: 14px;
+        flex-wrap: wrap;
+    }
+
+    .admin-search-box,
+    .employee-search-form,
+    .records-filters {
+        min-width: 0;
+    }
+
+    .records-container {
+        width: calc(100% - 28px);
+        margin-top: 20px;
+    }
+
+    .records-card {
+        padding: 18px;
+    }
+
+    .records-table-wrapper {
+        margin-right: -2px;
+    }
+
+    .filter-button,
+    .reset-button,
+    .record-view-button,
+    .btn,
+    button {
+        min-height: 40px;
+    }
+
+    .dashboard-header {
+        position: relative;
+    }
+
+    .top-section {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    /* Admin dashboard: stack records and quick actions on tablet/mobile.
+       The original second column had a 280px minimum, which squeezed the
+       records card on narrow screens. */
+    .admin-main-grid {
+        grid-template-columns: minmax(0, 1fr) !important;
+        width: 100%;
+        min-width: 0;
+    }
+
+    .admin-records-card,
+    .admin-actions-card,
+    .admin-info-card {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .admin-table-wrapper {
+        width: 100%;
+        max-width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .admin-table {
+        min-width: 750px;
+    }
+
+    .employee-info-card {
+        width: 100%;
+    }
+
+    .leave-cards {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 600px) {
+    .admin-header {
+        padding: 10px 13px !important;
+    }
+
+    .admin-logo,
+    .admin-logo img {
+        width: 104px;
+        max-width: 104px;
+    }
+
+    .admin-brand-divider {
+        display: none;
+    }
+
+    .admin-brand-text {
+        display: none;
+    }
+
+    .admin-avatar {
+        width: 36px;
+        height: 36px;
+        font-size: 15px;
+    }
+
+    .admin-user-details,
+    .admin-user-info {
+        display: none;
+    }
+
+    .admin-logout {
+        font-size: 12px;
+        padding: 9px 10px;
+    }
+
+    .admin-container {
+        width: calc(100% - 24px);
+        margin-top: 18px;
+        padding-bottom: 28px;
+    }
+
+    .admin-welcome {
+        padding: 18px;
+        border-radius: 12px;
+    }
+
+    .admin-welcome h1 {
+        font-size: 21px;
+        line-height: 1.3;
+    }
+
+    .admin-summary {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 12px;
+    }
+
+    .admin-main-grid {
+        grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    .admin-search-box {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+    }
+
+    .admin-search-box input,
+    .admin-search-box button {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .admin-summary-card {
+        padding: 16px;
+    }
+
+    .dashboard-container {
+        padding: 20px 12px 32px;
+    }
+
+    .dashboard-header {
+        padding: 12px;
+    }
+
+    .brand-section {
+        width: auto;
+        min-width: 0;
+    }
+
+    .header-user {
+        width: auto;
+        margin-left: auto;
+    }
+
+    .dashboard-logo {
+        width: 115px;
+    }
+
+    .welcome-area h1 {
+        font-size: 24px;
+    }
+
+    .employee-info-card {
+        padding: 14px;
+    }
+
+    .employee-detail {
+        padding: 0 8px;
+    }
+
+    .leave-section {
+        padding: 14px 11px;
+    }
+
+    .section-title h2 {
+        font-size: 21px;
+    }
+
+    .leave-cards {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .records-container {
+        width: calc(100% - 20px);
+        margin: 14px auto 28px;
+    }
+
+    .records-card {
+        padding: 14px;
+        border-radius: 10px;
+    }
+
+    .records-title h1 {
+        font-size: 21px;
+    }
+
+    .records-filters,
+    .filter-row,
+    .custom-dates {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .summary-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .surrender-card-header,
+    .employee-table-header,
+    .employee-profile-header,
+    .calendar-title-row {
+        align-items: stretch;
+    }
+
+    .add-employee-grid,
+    .employee-details-grid,
+    .profile-leave-grid,
+    .profile-action-grid {
+        grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    .add-employee-field.full-width {
+        grid-column: auto;
+    }
+
+    .login-page {
+        min-height: 100svh;
+        padding: 20px 12px;
+        overflow-y: auto;
+    }
+
+    .login-card {
+        width: min(100%, 440px);
+        min-height: 0;
+        padding: 28px 20px;
+        border-radius: 16px;
+    }
+
+    .logo-container {
+        width: min(100%, 260px);
+        margin-bottom: 20px;
+    }
+
+    .login-card h1 {
+        font-size: clamp(19px, 5vw, 23px);
+        line-height: 1.35;
+    }
+
+    .subtitle {
+        margin-bottom: 26px;
+    }
+
+    .input-box {
+        height: 54px;
+        margin-bottom: 17px;
+        padding: 0 16px;
+    }
+
+    .input-box input {
+        font-size: 16px;
+    }
+
+    .login-button {
+        width: 100%;
+        height: 50px;
+        margin-top: 16px;
+    }
+}
+
+@media (max-width: 380px) {
+    .admin-header {
+        align-items: center;
+    }
+
+    .admin-logo,
+    .admin-logo img {
+        width: 90px;
+        max-width: 90px;
+    }
+
+    .admin-logout {
+        padding: 8px;
+        font-size: 11px;
+    }
+
+    .dashboard-logo {
+        width: 100px;
+    }
+
+    .login-card {
+        padding: 24px 16px;
+    }
+}
+
+/* Respect users who prefer reduced motion. */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        scroll-behavior: auto !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}
