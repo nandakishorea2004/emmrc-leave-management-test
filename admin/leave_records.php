@@ -1,6 +1,8 @@
+
 <?php
 session_start();
-require_once "../db.php";
+
+require_once __DIR__ . "/../db.php";
 
 /* ADMIN ACCESS CHECK */
 if (!isset($_SESSION["role"]) || $_SESSION["role"] !== "admin") {
@@ -19,32 +21,56 @@ $sort = trim($_GET["sort"] ?? "created_at");
 $direction = strtoupper(trim($_GET["direction"] ?? "DESC"));
 
 $allowed_date_filters = ["all", "today", "week", "month", "custom"];
-if (!in_array($date_filter, $allowed_date_filters, true)) $date_filter = "all";
-$allowed_sorts = ["employee", "department", "leave_type", "from_date", "to_date", "days", "created_at"];
-if (!in_array($sort, $allowed_sorts, true)) $sort = "created_at";
-if (!in_array($direction, ["ASC", "DESC"], true)) $direction = "DESC";
+if (!in_array($date_filter, $allowed_date_filters, true)) {
+    $date_filter = "all";
+}
 
+$allowed_sorts = [
+    "employee", "department", "leave_type",
+    "from_date", "to_date", "days", "created_at"
+];
+
+if (!in_array($sort, $allowed_sorts, true)) {
+    $sort = "created_at";
+}
+
+if (!in_array($direction, ["ASC", "DESC"], true)) {
+    $direction = "DESC";
+}
+
+/* DATE FILTERS */
 $today = new DateTimeImmutable("today");
 $report_from = null;
 $report_to = null;
 $filter_error = "";
+
 switch ($date_filter) {
     case "today":
         $report_from = $today->format("Y-m-d");
         $report_to = $today->format("Y-m-d");
         break;
+
     case "week":
         $report_from = $today->modify("monday this week")->format("Y-m-d");
         $report_to = $today->modify("sunday this week")->format("Y-m-d");
         break;
+
     case "month":
         $report_from = $today->modify("first day of this month")->format("Y-m-d");
         $report_to = $today->modify("last day of this month")->format("Y-m-d");
         break;
+
     case "custom":
         $valid_from = DateTimeImmutable::createFromFormat("!Y-m-d", $from_date);
         $valid_to = DateTimeImmutable::createFromFormat("!Y-m-d", $to_date);
-        if ($valid_from && $valid_to && $valid_from->format("Y-m-d") === $from_date && $valid_to->format("Y-m-d") === $to_date && $from_date <= $to_date) {
+
+        if (
+            $valid_from &&
+            $valid_to &&
+            $valid_from->format("Y-m-d") === $from_date &&
+            $valid_to->format("Y-m-d") === $to_date &&
+            $from_date <= $to_date
+        ) {
             $report_from = $from_date;
             $report_to = $to_date;
         } else {
@@ -55,38 +81,55 @@ switch ($date_filter) {
 
 /* LOAD FILTER OPTIONS */
 $leave_types = [];
-$type_result = $conn->query("SELECT name FROM leave_types WHERE status = 1 ORDER BY id");
-if ($type_result) while ($row = $type_result->fetch_assoc()) $leave_types[] = $row["name"];
+
+$type_stmt = $conn->prepare(
+    "SELECT name FROM leave_types WHERE status = 1 ORDER BY id"
+);
+$type_stmt->execute();
+$leave_types = $type_stmt->fetchAll(PDO::FETCH_COLUMN);
 
 $departments = [];
-$department_result = $conn->query("SELECT DISTINCT department FROM employees WHERE status = 'active' AND department <> '' ORDER BY department ASC");
-if ($department_result) while ($row = $department_result->fetch_assoc()) $departments[] = $row["department"];
+
+$department_stmt = $conn->prepare("
+    SELECT DISTINCT department
+    FROM employees
+    WHERE status = 'active'
+    AND department <> ''
+    ORDER BY department ASC
+");
+$department_stmt->execute();
+$departments = $department_stmt->fetchAll(PDO::FETCH_COLUMN);
 
 /* BUILD COMMON LEAVE REPORT FILTERS */
 $where = ($filter_error !== "") ? " WHERE 1=0 " : " WHERE 1=1 ";
 $params = [];
-$bind_types = "";
+
 if ($search !== "") {
     $where .= " AND (e.name LIKE ? OR e.employee_id LIKE ?) ";
     $like = "%" . $search . "%";
-    $params[] = $like; $params[] = $like; $bind_types .= "ss";
+    $params[] = $like;
+    $params[] = $like;
 }
+
 if ($leave_type !== "") {
     $where .= " AND lt.name = ? ";
-    $params[] = $leave_type; $bind_types .= "s";
+    $params[] = $leave_type;
 }
+
 if ($department !== "") {
     $where .= " AND e.department = ? ";
-    $params[] = $department; $bind_types .= "s";
+    $params[] = $department;
 }
+
 if ($date_filter !== "custom" || $filter_error === "") {
     if ($report_from !== null && $report_to !== null) {
-        // A leave record is included if any part of its leave period overlaps the selected dates.
         $where .= " AND lr.from_date <= ? AND lr.to_date >= ? ";
-        $params[] = $report_to; $params[] = $report_from; $bind_types .= "ss";
+        $params[] = $report_to;
+        $params[] = $report_from;
     }
 }
 
+/* SORTING */
 $sort_columns = [
     "employee" => "e.name",
     "department" => "e.department",
@@ -96,35 +139,35 @@ $sort_columns = [
     "days" => "lr.days_taken",
     "created_at" => "lr.created_at"
 ];
+
 $order_sql = " ORDER BY " . $sort_columns[$sort] . " " . $direction . ", lr.id DESC ";
 
 /* LOAD LEAVE RECORDS */
 $leave_records = [];
-$records_sql = "SELECT
-    lr.id AS record_id,
-    e.name AS employee,
-    e.employee_id AS employee_code,
-    e.department,
-    lt.code AS leave_code,
-    lt.name AS type,
-    lr.from_date,
-    lr.to_date,
-    lr.days_taken AS days,
-    lr.created_at,
-    lr.status
-FROM leave_records lr
-INNER JOIN employees e ON lr.employee_id = e.id
-INNER JOIN leave_types lt ON lr.leave_type_id = lt.id" . $where . $order_sql;
-$stmt = $conn->prepare($records_sql);
-if ($stmt) {
-    if ($params) $stmt->bind_param($bind_types, ...$params);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    while ($row = $result->fetch_assoc()) $leave_records[] = $row;
-    $stmt->close();
-}
 
-/* REPORT SUMMARY: computed from the same filtered rows */
+$records_sql = "
+    SELECT
+        lr.id AS record_id,
+        e.name AS employee,
+        e.employee_id AS employee_code,
+        e.department,
+        lt.code AS leave_code,
+        lt.name AS type,
+        lr.from_date,
+        lr.to_date,
+        lr.days_taken AS days,
+        lr.created_at,
+        lr.status
+    FROM leave_records lr
+    INNER JOIN employees e ON lr.employee_id = e.id
+    INNER JOIN leave_types lt ON lr.leave_type_id = lt.id
+    " . $where . $order_sql;
+
+$stmt = $conn->prepare($records_sql);
+$stmt->execute($params);
+$leave_records = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+/* REPORT SUMMARY */
 $total_records = 0;
 $total_days = 0.0;
 $employee_set = [];
@@ -138,59 +181,83 @@ foreach ($leave_records as $record) {
     $total_days += (float)$record["days"];
     $employee_set[$record["employee_code"]] = true;
 }
+
 $total_employees = count($employee_set);
 
-/* DEPARTMENT-WISE ANALYSIS, USING THE SAME FILTERS */
+/* DEPARTMENT-WISE ANALYSIS */
 $department_summary = [];
-$summary_sql = "SELECT
-    e.department,
-    COUNT(lr.id) AS record_count,
-    COUNT(DISTINCT e.id) AS employee_count,
-    COALESCE(SUM(lr.days_taken),0) AS total_days
-FROM leave_records lr
-INNER JOIN employees e ON lr.employee_id=e.id
-INNER JOIN leave_types lt ON lr.leave_type_id=lt.id"
-. $where .
-" AND lr.status = 'ACTIVE'
-GROUP BY e.department
-ORDER BY total_days DESC, e.department ASC";
-$summary_stmt = $conn->prepare($summary_sql);
-if ($summary_stmt) {
-    if ($params) $summary_stmt->bind_param($bind_types, ...$params);
-    $summary_stmt->execute();
-    $summary_result = $summary_stmt->get_result();
-    while ($row = $summary_result->fetch_assoc()) $department_summary[] = $row;
-    $summary_stmt->close();
-}
 
-/* LOAD EL SURRENDER DETAILS (SEARCH AND DEPARTMENT FILTER APPLY) */
+$summary_sql = "
+    SELECT
+        e.department,
+        COUNT(lr.id) AS record_count,
+        COUNT(DISTINCT e.id) AS employee_count,
+        COALESCE(SUM(lr.days_taken), 0) AS total_days
+    FROM leave_records lr
+    INNER JOIN employees e ON lr.employee_id = e.id
+    INNER JOIN leave_types lt ON lr.leave_type_id = lt.id
+    " . $where . "
+    AND lr.status = 'ACTIVE'
+    GROUP BY e.department
+    ORDER BY total_days DESC, e.department ASC
+";
+
+$summary_stmt = $conn->prepare($summary_sql);
+$summary_stmt->execute($params);
+$department_summary = $summary_stmt->fetchAll(PDO::FETCH_ASSOC);
+
+/* LOAD EL SURRENDER DETAILS */
 $surrender_records = [];
+
 $surrender_where = ($filter_error !== "") ? " WHERE 1=0 " : " WHERE 1=1 ";
 $surrender_params = [];
-$surrender_types = "";
+
 if ($search !== "") {
     $surrender_where .= " AND (e.name LIKE ? OR e.employee_id LIKE ?) ";
     $like = "%" . $search . "%";
-    $surrender_params[] = $like; $surrender_params[] = $like; $surrender_types .= "ss";
-}
-if ($department !== "") {
-    $surrender_where .= " AND e.department = ? ";
-    $surrender_params[] = $department; $surrender_types .= "s";
-}
-if ($report_from !== null && $report_to !== null && ($date_filter !== "custom" || $filter_error === "")) {
-    $surrender_where .= " AND es.surrender_date BETWEEN ? AND ? ";
-    $surrender_params[] = $report_from; $surrender_params[] = $report_to; $surrender_types .= "ss";
-}
-$surrender_sql = "SELECT es.id, es.employee_id, e.employee_id AS employee_code, e.name AS employee_name, e.designation, e.department, es.surrender_date, es.year, es.days, es.status, es.remarks FROM el_surrender es INNER JOIN employees e ON es.employee_id=e.id" . $surrender_where . " ORDER BY es.surrender_date DESC, es.id DESC";
-$surrender_stmt = $conn->prepare($surrender_sql);
-if ($surrender_stmt) {
-    if ($surrender_params) $surrender_stmt->bind_param($surrender_types, ...$surrender_params);
-    $surrender_stmt->execute();
-    $surrender_result = $surrender_stmt->get_result();
-    while ($row = $surrender_result->fetch_assoc()) $surrender_records[] = $row;
-    $surrender_stmt->close();
+    $surrender_params[] = $like;
+    $surrender_params[] = $like;
 }
 
+if ($department !== "") {
+    $surrender_where .= " AND e.department = ? ";
+    $surrender_params[] = $department;
+}
+
+if (
+    $report_from !== null &&
+    $report_to !== null &&
+    ($date_filter !== "custom" || $filter_error === "")
+) {
+    $surrender_where .= " AND es.surrender_date BETWEEN ? AND ? ";
+    $surrender_params[] = $report_from;
+    $surrender_params[] = $report_to;
+}
+
+$surrender_sql = "
+    SELECT
+        es.id,
+        es.employee_id,
+        e.employee_id AS employee_code,
+        e.name AS employee_name,
+        e.designation,
+        e.department,
+        es.surrender_date,
+        es.year,
+        es.days,
+        es.status,
+        es.remarks
+    FROM el_surrender es
+    INNER JOIN employees e ON es.employee_id = e.id
+    " . $surrender_where . "
+    ORDER BY es.surrender_date DESC, es.id DESC
+";
+
+$surrender_stmt = $conn->prepare($surrender_sql);
+$surrender_stmt->execute($surrender_params);
+$surrender_records = $surrender_stmt->fetchAll(PDO::FETCH_ASSOC);
+
+/* BADGE HELPERS */
 function getLeaveBadgeClass($leaveType) {
     switch ($leaveType) {
         case "Earned Leave": return "earned-badge";
@@ -201,6 +268,7 @@ function getLeaveBadgeClass($leaveType) {
         default: return "casual-badge";
     }
 }
+
 function getSurrenderStatusClass($status) {
     switch (strtoupper($status)) {
         case "APPROVED": return "status-approved";
@@ -208,19 +276,45 @@ function getSurrenderStatusClass($status) {
         default: return "status-pending";
     }
 }
+
 function reportUrl(array $changes = []) {
     $values = $_GET;
+
     foreach ($changes as $key => $value) {
-        if ($value === null) unset($values[$key]); else $values[$key] = $value;
+        if ($value === null) {
+            unset($values[$key]);
+        } else {
+            $values[$key] = $value;
+        }
     }
+
     return "?" . http_build_query($values);
 }
+
 function sortLink($label, $key, $currentSort, $currentDirection) {
-    $nextDirection = ($currentSort === $key && strtoupper($currentDirection) === "ASC") ? "DESC" : "ASC";
-    $arrow = $currentSort === $key ? (strtoupper($currentDirection) === "ASC" ? " ▲" : " ▼") : "";
-    return '<a class="sort-link" href="' . htmlspecialchars(reportUrl(["sort" => $key, "direction" => $nextDirection]), ENT_QUOTES, "UTF-8") . '">' . htmlspecialchars($label, ENT_QUOTES, "UTF-8") . $arrow . '</a>';
+    $nextDirection = (
+        $currentSort === $key &&
+        strtoupper($currentDirection) === "ASC"
+    ) ? "DESC" : "ASC";
+
+    $arrow = $currentSort === $key
+        ? (strtoupper($currentDirection) === "ASC" ? " ▲" : " ▼")
+        : "";
+
+    return '<a class="sort-link" href="' .
+        htmlspecialchars(
+            reportUrl(["sort" => $key, "direction" => $nextDirection]),
+            ENT_QUOTES,
+            "UTF-8"
+        ) .
+        '">' .
+        htmlspecialchars($label, ENT_QUOTES, "UTF-8") .
+        $arrow .
+        '</a>';
 }
+
 ?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
