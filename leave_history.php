@@ -1,17 +1,18 @@
+
 <?php
 
 /* =========================================================
    SESSION & DATABASE
-   ========================================================= */
+========================================================= */
 
 session_start();
 
-require_once "db.php";
+require_once __DIR__ . "/db.php";
 
 
 /* =========================================================
    ACCESS CONTROL
-   ========================================================= */
+========================================================= */
 
 if (!isset($_SESSION["role"])) {
     header("Location: index.php");
@@ -21,17 +22,10 @@ if (!isset($_SESSION["role"])) {
 
 /* =========================================================
    EMPLOYEE SELECTION
-   ========================================================= */
+========================================================= */
 
 $from = $_GET["from"] ?? "profile";
 
-/*
- * Admin:
- * Employee ID comes from URL.
- *
- * Employee:
- * Employee ID comes from session.
- */
 if ($_SESSION["role"] === "admin") {
 
     $employee_id = trim($_GET["id"] ?? "");
@@ -54,15 +48,12 @@ if ($_SESSION["role"] === "admin") {
 
     header("Location: index.php");
     exit();
-
 }
 
 
 /* =========================================================
    LOAD EMPLOYEE FROM DATABASE
-   ========================================================= */
-
-$employee = null;
+========================================================= */
 
 $stmt = $conn->prepare("
     SELECT
@@ -77,20 +68,14 @@ $stmt = $conn->prepare("
     LIMIT 1
 ");
 
-$stmt->bind_param("s", $employee_id);
+$stmt->execute([$employee_id]);
 
-$stmt->execute();
-
-$result = $stmt->get_result();
-
-$employee = $result->fetch_assoc();
-
-$stmt->close();
+$employee = $stmt->fetch(PDO::FETCH_ASSOC);
 
 
 /* =========================================================
    EMPLOYEE NOT FOUND
-   ========================================================= */
+========================================================= */
 
 if (!$employee) {
 
@@ -106,7 +91,7 @@ if (!$employee) {
 
 /* =========================================================
    DATABASE LEAVE HISTORY
-   ========================================================= */
+========================================================= */
 
 $leave_history = [];
 
@@ -133,14 +118,12 @@ $stmt = $conn->prepare("
         lr.id DESC
 ");
 
-$stmt->bind_param("s", $employee_id);
+$stmt->execute([$employee_id]);
 
-$stmt->execute();
-
-$result = $stmt->get_result();
+$results = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 
-while ($row = $result->fetch_assoc()) {
+foreach ($results as $row) {
 
     $leave_history[] = [
 
@@ -165,19 +148,17 @@ while ($row = $result->fetch_assoc()) {
     ];
 }
 
-$stmt->close();
-
 
 /* =========================================================
    TOTAL RECORDS
-   ========================================================= */
+========================================================= */
 
 $total_records = count($leave_history);
 
 
 /* =========================================================
    EMPLOYEE NAME / OTHER DATA
-   ========================================================= */
+========================================================= */
 
 $employee_name = $employee["name"];
 
@@ -186,6 +167,7 @@ $designation = $employee["designation"];
 $department = $employee["department"];
 
 ?>
+
 
 <!DOCTYPE html>
 <html lang="en">
