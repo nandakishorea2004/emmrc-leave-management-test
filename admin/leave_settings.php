@@ -1,125 +1,132 @@
+
 <?php
 session_start();
 
-/* =========================================================
-   ADMIN ACCESS CHECK
-========================================================= */
+require_once __DIR__ . "/../db.php";
+
+/* ADMIN ACCESS CHECK */
 if (($_SESSION["role"] ?? "") !== "admin") {
     header("Location: ../index.php");
     exit();
 }
-require_once "../db.php";
 
-/* =========================================================
-   SETTINGS TABLE
-   The table is created automatically if it does not exist.
-========================================================= */
+/* CREATE SETTINGS TABLE */
 $createTableSql = "
     CREATE TABLE IF NOT EXISTS leave_settings (
         setting_key VARCHAR(100) NOT NULL PRIMARY KEY,
         setting_value VARCHAR(100) NOT NULL,
-        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 ";
 
-if (!$conn->query($createTableSql)) {
-    die("Unable to prepare leave settings: " . htmlspecialchars($conn->error));
-}
+$conn->exec($createTableSql);
 
+/* DEFAULT SETTINGS */
 $defaultSettings = [
     "cl_default_days" => "20",
     "el_duty_days_divisor" => "11",
     "el_max_balance" => "300"
 ];
 
-$insertSetting = $conn->prepare(
-    "INSERT IGNORE INTO leave_settings (setting_key, setting_value) VALUES (?, ?)"
-);
+/* INITIALIZE DEFAULT SETTINGS */
+$insertSetting = $conn->prepare("
+    INSERT IGNORE INTO leave_settings
+    (setting_key, setting_value)
+    VALUES (?, ?)
+");
 
 foreach ($defaultSettings as $key => $value) {
-    $insertSetting->bind_param("ss", $key, $value);
-    if (!$insertSetting->execute()) {
-        die("Unable to initialize leave settings.");
-    }
+    $insertSetting->execute([$key, $value]);
 }
-$insertSetting->close();
 
 $message = "";
 $messageType = "";
 
-/* =========================================================
-   SAVE SETTINGS
-========================================================= */
+/* SAVE SETTINGS */
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
+
     $clDays = filter_input(INPUT_POST, "cl_default_days", FILTER_VALIDATE_INT);
     $elDivisor = filter_input(INPUT_POST, "el_duty_days_divisor", FILTER_VALIDATE_INT);
     $elMax = filter_input(INPUT_POST, "el_max_balance", FILTER_VALIDATE_INT);
 
     if ($clDays === false || $clDays === null || $clDays < 0 || $clDays > 365) {
+
         $message = "Casual Leave default must be a whole number from 0 to 365.";
         $messageType = "error";
+
     } elseif ($elDivisor === false || $elDivisor === null || $elDivisor < 1 || $elDivisor > 366) {
+
         $message = "The EL duty-day divisor must be a whole number from 1 to 366.";
         $messageType = "error";
+
     } elseif ($elMax === false || $elMax === null || $elMax < 0 || $elMax > 9999) {
+
         $message = "The EL maximum balance must be a whole number from 0 to 9999.";
         $messageType = "error";
+
     } else {
+
         $settingsToSave = [
             "cl_default_days" => (string)$clDays,
             "el_duty_days_divisor" => (string)$elDivisor,
             "el_max_balance" => (string)$elMax
         ];
 
-        $updateSetting = $conn->prepare(
-            "INSERT INTO leave_settings (setting_key, setting_value)
-             VALUES (?, ?)
-             ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)"
-        );
+        try {
 
-        $conn->begin_transaction();
-        $saveOkay = true;
+            $conn->beginTransaction();
 
-        foreach ($settingsToSave as $key => $value) {
-            $updateSetting->bind_param("ss", $key, $value);
-            if (!$updateSetting->execute()) {
-                $saveOkay = false;
-                break;
+            $updateSetting = $conn->prepare("
+                INSERT INTO leave_settings (setting_key, setting_value)
+                VALUES (?, ?)
+                ON DUPLICATE KEY UPDATE
+                setting_value = VALUES(setting_value)
+            ");
+
+            foreach ($settingsToSave as $key => $value) {
+                $updateSetting->execute([$key, $value]);
             }
-        }
 
-        if ($saveOkay) {
             $conn->commit();
+
             $message = "Leave settings saved successfully.";
             $messageType = "success";
-        } else {
-            $conn->rollback();
+
+        } catch (Throwable $e) {
+
+            if ($conn->inTransaction()) {
+                $conn->rollBack();
+            }
+
+            error_log("Leave settings save error: " . $e->getMessage());
+
             $message = "Could not save the settings. Please try again.";
             $messageType = "error";
         }
-
-        $updateSetting->close();
     }
 }
 
-/* =========================================================
-   LOAD CURRENT SETTINGS
-========================================================= */
+/* LOAD CURRENT SETTINGS */
 $currentSettings = $defaultSettings;
-$result = $conn->query("SELECT setting_key, setting_value FROM leave_settings");
-if ($result) {
-    while ($row = $result->fetch_assoc()) {
-        if (array_key_exists($row["setting_key"], $currentSettings)) {
-            $currentSettings[$row["setting_key"]] = $row["setting_value"];
-        }
+
+$result = $conn->query("
+    SELECT setting_key, setting_value
+    FROM leave_settings
+");
+
+while ($row = $result->fetch(PDO::FETCH_ASSOC)) {
+    if (array_key_exists($row["setting_key"], $currentSettings)) {
+        $currentSettings[$row["setting_key"]] = $row["setting_value"];
     }
-    $result->free();
 }
 
+/* HTML ESCAPE HELPER */
 function h($value) {
     return htmlspecialchars((string)$value, ENT_QUOTES, "UTF-8");
 }
 ?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
