@@ -1,7 +1,7 @@
 
 <?php
 
-require_once "db.php";
+require_once __DIR__ . "/db.php";
 
 /*
 |--------------------------------------------------------------------------
@@ -21,7 +21,7 @@ $debugELCycle = false;
  * - Second Saturdays
  * - Manually added holidays (source_type = 'M')
  */
-function isEligibleELDutyDay($conn, DateTime $date)
+function isEligibleELDutyDay(PDO $conn, DateTime $date)
 {
     // Exclude Sundays.
     if ($date->format("w") === "0") {
@@ -48,15 +48,9 @@ function isEligibleELDutyDay($conn, DateTime $date)
         LIMIT 1
     ");
 
-    if (!$stmt) {
-        throw new Exception("Could not prepare holiday query.");
-    }
+    $stmt->execute([$holidayDate]);
 
-    $stmt->bind_param("s", $holidayDate);
-    $stmt->execute();
-
-    $holiday = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
+    $holiday = $stmt->fetch(PDO::FETCH_ASSOC);
 
     return !$holiday;
 }
@@ -74,11 +68,12 @@ function isEligibleELDutyDay($conn, DateTime $date)
  * Late-entered leave is handled by the leave-entry workflow,
  * which reverses any affected credited cycle exactly once.
  */
-function processEarnedLeave($conn, $employee_db_id)
+function processEarnedLeave(PDO $conn, $employee_db_id)
 {
     global $debugELCycle;
 
     try {
+
         /*
          * Get employee details.
          */
@@ -94,15 +89,9 @@ function processEarnedLeave($conn, $employee_db_id)
             LIMIT 1
         ");
 
-        if (!$stmt) {
-            throw new Exception("Could not prepare employee query.");
-        }
+        $stmt->execute([(int)$employee_db_id]);
 
-        $stmt->bind_param("i", $employee_db_id);
-        $stmt->execute();
-
-        $employee = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
+        $employee = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if (!$employee) {
             return [
@@ -126,18 +115,23 @@ function processEarnedLeave($conn, $employee_db_id)
         );
 
         $cycle_end = clone $cycle_start;
+
         $eligible_days = 0;
         $debug_dates = [];
 
         while ($eligible_days < 11) {
+
             $date_label = $cycle_end->format("d-m-Y");
 
             if (isEligibleELDutyDay($conn, $cycle_end)) {
+
                 $eligible_days++;
 
                 $debug_dates[] =
                     $date_label . " = Eligible day " . $eligible_days;
+
             } else {
+
                 $debug_dates[] = $date_label . " = Excluded";
             }
 
@@ -151,6 +145,7 @@ function processEarnedLeave($conn, $employee_db_id)
          * No balance or cycle records are changed.
          */
         if ($debugELCycle) {
+
             return [
                 "success" => true,
                 "diagnostic" => true,
@@ -168,6 +163,7 @@ function processEarnedLeave($conn, $employee_db_id)
         $today = new DateTime("today");
 
         if ($today < $cycle_end) {
+
             return [
                 "success" => false,
                 "message" => "Current EL cycle is not completed yet.",
@@ -184,7 +180,7 @@ function processEarnedLeave($conn, $employee_db_id)
          * Start transaction before checking and updating
          * the cycle and balance.
          */
-        $conn->begin_transaction();
+        $conn->beginTransaction();
 
         /*
          * Prevent duplicate processing.
@@ -197,22 +193,16 @@ function processEarnedLeave($conn, $employee_db_id)
             LIMIT 1
         ");
 
-        if (!$stmt) {
-            throw new Exception("Could not prepare cycle query.");
-        }
-
-        $stmt->bind_param(
-            "is",
-            $employee_db_id,
+        $stmt->execute([
+            (int)$employee_db_id,
             $cycle_start_sql
-        );
+        ]);
 
-        $stmt->execute();
-        $existing_cycle = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
+        $existing_cycle = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if ($existing_cycle) {
-            $conn->rollback();
+
+            $conn->rollBack();
 
             return [
                 "success" => false,
@@ -225,28 +215,21 @@ function processEarnedLeave($conn, $employee_db_id)
          * All leave types are included.
          */
         $stmt = $conn->prepare("
-    SELECT COUNT(*) AS leave_count
-    FROM leave_records
-    WHERE employee_id = ?
-      AND status = 'ACTIVE'
-      AND from_date <= ?
-      AND to_date >= ?
-");
+            SELECT COUNT(*) AS leave_count
+            FROM leave_records
+            WHERE employee_id = ?
+              AND status = 'ACTIVE'
+              AND from_date <= ?
+              AND to_date >= ?
+        ");
 
-        if (!$stmt) {
-            throw new Exception("Could not prepare leave query.");
-        }
-
-        $stmt->bind_param(
-            "iss",
-            $employee_db_id,
+        $stmt->execute([
+            (int)$employee_db_id,
             $cycle_end_sql,
             $cycle_start_sql
-        );
+        ]);
 
-        $stmt->execute();
-        $leave_result = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
+        $leave_result = $stmt->fetch(PDO::FETCH_ASSOC);
 
         $leave_occurred =
             ((int)$leave_result["leave_count"] > 0);
@@ -277,27 +260,22 @@ function processEarnedLeave($conn, $employee_db_id)
             FOR UPDATE
         ");
 
-        if (!$stmt) {
-            throw new Exception("Could not prepare EL balance query.");
-        }
-
-        $stmt->bind_param(
-            "ii",
-            $employee_db_id,
+        $stmt->execute([
+            (int)$employee_db_id,
             $credited_year
-        );
+        ]);
 
-        $stmt->execute();
-        $balance = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
+        $balance = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if (!$balance) {
-            $conn->rollback();
+
+            $conn->rollBack();
 
             return [
                 "success" => false,
                 "message" =>
-                    "EL balance record was not found for cycle completion year " . $credited_year . "."
+                    "EL balance record was not found for cycle completion year "
+                    . $credited_year . "."
             ];
         }
 
@@ -305,9 +283,11 @@ function processEarnedLeave($conn, $employee_db_id)
          * Apply the maximum accumulation limit of 300 days.
          */
         $current_balance = (float)$balance["closing_balance"];
+
         $allowed_credit = 0;
 
         if ($el_credit > 0 && $current_balance < 300) {
+
             $allowed_credit = min(
                 $el_credit,
                 300 - $current_balance
@@ -321,6 +301,7 @@ function processEarnedLeave($conn, $employee_db_id)
          * Update the balance only when EL is credited.
          */
         if ($allowed_credit > 0) {
+
             $balance_id = (int)$balance["id"];
 
             $stmt = $conn->prepare("
@@ -331,57 +312,47 @@ function processEarnedLeave($conn, $employee_db_id)
                 WHERE id = ?
             ");
 
-            if (!$stmt) {
-                throw new Exception("Could not prepare balance update.");
-            }
-
-            $stmt->bind_param(
-                "ddi",
+            $stmt->execute([
                 $allowed_credit,
                 $new_closing_balance,
                 $balance_id
-            );
-
-            $stmt->execute();
-            $stmt->close();
+            ]);
         }
 
         /*
          * Record the completed cycle.
          */
-        $cycle_status = "COMPLETED";
-        $processed_at = date("Y-m-d H:i:s");
-
         $stmt = $conn->prepare("
             INSERT INTO el_cycles
-    (employee_id, cycle_start_date, cycle_end_date,
-     cycle_status, leave_occurred, el_credited,
-     el_original_credited, credited_year, processed_at)
-VALUES (?, ?, ?, 'COMPLETED', ?, ?, ?, ?, NOW())
-");
+            (
+                employee_id,
+                cycle_start_date,
+                cycle_end_date,
+                cycle_status,
+                leave_occurred,
+                el_credited,
+                el_original_credited,
+                credited_year,
+                processed_at
+            )
+            VALUES (?, ?, ?, 'COMPLETED', ?, ?, ?, ?, NOW())
+        ");
 
-        if (!$stmt) {
-            throw new Exception("Could not prepare cycle insert.");
-        }
-
-        $stmt->bind_param(
-    "issiddi",
-    $employee_db_id,
-    $cycle_start_sql,
-    $cycle_end_sql,
-    $leave_occurred,
-    $allowed_credit,
-    $allowed_credit,
-    $credited_year
-);
-
-        $stmt->execute();
-        $stmt->close();
+        $stmt->execute([
+            (int)$employee_db_id,
+            $cycle_start_sql,
+            $cycle_end_sql,
+            (int)$leave_occurred,
+            $allowed_credit,
+            $allowed_credit,
+            $credited_year
+        ]);
 
         /*
          * Begin the next cycle the day after this cycle ends.
          */
         $next_cycle_start = clone $cycle_end;
+
         $next_cycle_start->modify("+1 day");
 
         $next_cycle_start_sql =
@@ -395,18 +366,10 @@ VALUES (?, ?, ?, 'COMPLETED', ?, ?, ?, ?, NOW())
             WHERE id = ?
         ");
 
-        if (!$stmt) {
-            throw new Exception("Could not prepare employee update.");
-        }
-
-        $stmt->bind_param(
-            "si",
+        $stmt->execute([
             $next_cycle_start_sql,
-            $employee_db_id
-        );
-
-        $stmt->execute();
-        $stmt->close();
+            (int)$employee_db_id
+        ]);
 
         $conn->commit();
 
@@ -423,15 +386,21 @@ VALUES (?, ?, ?, 'COMPLETED', ?, ?, ?, ?, NOW())
         ];
 
     } catch (Throwable $e) {
-        if ($conn->errno === 0) {
-            // The transaction may already have been rolled back.
+
+        /*
+         * Roll back only if a transaction is still active.
+         * PDO uses inTransaction(), not MySQLi errno.
+         */
+        if ($conn->inTransaction()) {
+
+            try {
+                $conn->rollBack();
+            } catch (Throwable $ignored) {
+                // Ignore rollback errors.
+            }
         }
 
-        try {
-            $conn->rollback();
-        } catch (Throwable $ignored) {
-            // Ignore rollback errors.
-        }
+        error_log("Earned Leave processing error: " . $e->getMessage());
 
         return [
             "success" => false,
