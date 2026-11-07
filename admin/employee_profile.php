@@ -1,6 +1,9 @@
+
 <?php
+
 session_start();
-require_once "../db.php";
+
+require_once __DIR__ . "/../db.php";
 
 /* ADMIN ACCESS CHECK */
 if (!isset($_SESSION["role"]) || $_SESSION["role"] !== "admin") {
@@ -10,6 +13,7 @@ if (!isset($_SESSION["role"]) || $_SESSION["role"] !== "admin") {
 
 /* SELECT EMPLOYEE */
 $employee_id = trim($_GET["id"] ?? "");
+
 if ($employee_id === "") {
     header("Location: employees.php");
     exit();
@@ -28,14 +32,15 @@ $stmt = $conn->prepare("
         status,
         profile_picture
     FROM employees
-    WHERE employee_id = ?
+    WHERE employee_id = :employee_id
     LIMIT 1
 ");
-$stmt->bind_param("s", $employee_id);
-$stmt->execute();
-$result = $stmt->get_result();
-$employee = $result->fetch_assoc();
-$stmt->close();
+
+$stmt->execute([
+    ":employee_id" => $employee_id
+]);
+
+$employee = $stmt->fetch();
 
 if (!$employee) {
     header("Location: employees.php");
@@ -45,12 +50,26 @@ if (!$employee) {
 $employee_db_id = (int)$employee["id"];
 
 /* FORMAT EMPLOYEE DETAILS */
-$employee["joining_date"] = date("d-m-Y", strtotime($employee["joining_date"]));
+$employee["joining_date"] = date(
+    "d-m-Y",
+    strtotime($employee["joining_date"])
+);
+
 $employee["status"] = ucfirst(strtolower($employee["status"]));
-$initial = strtoupper(substr(trim($employee["name"]) !== "" ? trim($employee["name"]) : "?", 0, 1));
+
+$initial = strtoupper(
+    substr(
+        trim($employee["name"]) !== ""
+            ? trim($employee["name"])
+            : "?",
+        0,
+        1
+    )
+);
 
 /* VALIDATE PROFILE PICTURE PATH */
 $picture = trim($employee["profile_picture"] ?? "");
+
 $valid_picture = (
     $picture !== "" &&
     strpos($picture, "uploads/employee_photos/") === 0 &&
@@ -68,75 +87,121 @@ $hpl_balance = 0;
 
 /* GET CL / EL / HPL BALANCES */
 $stmt = $conn->prepare("
-    SELECT lt.code, lb.closing_balance
+    SELECT
+        lt.code,
+        lb.closing_balance
     FROM leave_balances lb
-    INNER JOIN leave_types lt ON lb.leave_type_id = lt.id
-    WHERE lb.employee_id = ?
-      AND lb.year = ?
+    INNER JOIN leave_types lt
+        ON lb.leave_type_id = lt.id
+    WHERE lb.employee_id = :employee_id
+      AND lb.year = :year
       AND lt.code IN ('CL', 'EL', 'HPL')
 ");
-$stmt->bind_param("ii", $employee_db_id, $current_year);
-$stmt->execute();
-$result = $stmt->get_result();
-while ($row = $result->fetch_assoc()) {
+
+$stmt->execute([
+    ":employee_id" => $employee_db_id,
+    ":year" => $current_year
+]);
+
+while ($row = $stmt->fetch()) {
+
     $balance = (float)$row["closing_balance"];
+
     switch ($row["code"]) {
-        case "CL": $cl_balance = $balance; break;
-        case "EL": $el_balance = $balance; break;
-        case "HPL": $hpl_balance = $balance; break;
+
+        case "CL":
+            $cl_balance = $balance;
+            break;
+
+        case "EL":
+            $el_balance = $balance;
+            break;
+
+        case "HPL":
+            $hpl_balance = $balance;
+            break;
     }
 }
-$stmt->close();
 
 /* COM / SCL / LWA TAKEN DAYS */
 $com_taken = 0;
 $scl_taken = 0;
 $lwa_taken = 0;
+
 $stmt = $conn->prepare("
-    SELECT lt.code, COALESCE(SUM(lr.days_taken), 0) AS total_days
+    SELECT
+        lt.code,
+        COALESCE(SUM(lr.days_taken), 0) AS total_days
     FROM leave_records lr
-    INNER JOIN leave_types lt ON lr.leave_type_id = lt.id
-    WHERE lr.employee_id = ?
-      AND YEAR(lr.from_date) = ?
+    INNER JOIN leave_types lt
+        ON lr.leave_type_id = lt.id
+    WHERE lr.employee_id = :employee_id
+      AND YEAR(lr.from_date) = :year
       AND lt.code IN ('COM', 'SCL', 'LWA')
     GROUP BY lt.code
 ");
-$stmt->bind_param("ii", $employee_db_id, $current_year);
-$stmt->execute();
-$result = $stmt->get_result();
-while ($row = $result->fetch_assoc()) {
+
+$stmt->execute([
+    ":employee_id" => $employee_db_id,
+    ":year" => $current_year
+]);
+
+while ($row = $stmt->fetch()) {
+
     $days = (float)$row["total_days"];
+
     switch ($row["code"]) {
-        case "COM": $com_taken = $days; break;
-        case "SCL": $scl_taken = $days; break;
-        case "LWA": $lwa_taken = $days; break;
+
+        case "COM":
+            $com_taken = $days;
+            break;
+
+        case "SCL":
+            $scl_taken = $days;
+            break;
+
+        case "LWA":
+            $lwa_taken = $days;
+            break;
     }
 }
-$stmt->close();
 
 /* FORMAT DAYS FOR DISPLAY */
 function displayDays($value) {
+
     $value = (float)$value;
+
     if ($value == floor($value)) {
         return (string)(int)$value;
     }
+
     return number_format($value, 2, ".", "");
 }
 
 /* RECENT LEAVE HISTORY */
 $recent_leaves = [];
+
 $stmt = $conn->prepare("
-    SELECT lt.code, lt.name AS leave_type, lr.from_date, lr.to_date, lr.days_taken
+    SELECT
+        lt.code,
+        lt.name AS leave_type,
+        lr.from_date,
+        lr.to_date,
+        lr.days_taken
     FROM leave_records lr
-    INNER JOIN leave_types lt ON lr.leave_type_id = lt.id
-    WHERE lr.employee_id = ?
+    INNER JOIN leave_types lt
+        ON lr.leave_type_id = lt.id
+    WHERE lr.employee_id = :employee_id
     ORDER BY lr.from_date DESC, lr.id DESC
     LIMIT 10
 ");
-$stmt->bind_param("i", $employee_db_id);
-$stmt->execute();
-$result = $stmt->get_result();
-while ($row = $result->fetch_assoc()) {
+
+$stmt->execute([
+    ":employee_id" => $employee_db_id
+]);
+
+while ($row = $stmt->fetch()) {
+
     $recent_leaves[] = [
         "code" => $row["code"],
         "type" => $row["leave_type"],
@@ -145,8 +210,9 @@ while ($row = $result->fetch_assoc()) {
         "days" => $row["days_taken"]
     ];
 }
-$stmt->close();
+
 ?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -190,15 +256,12 @@ $stmt->close();
             font-size: 32px;
             font-weight: 700;
         }
-        /* Keep employee information grid clean and remove the grey empty cell. */
         .employee-details-grid {
             background: #ffffff;
         }
-
         .employee-details-grid .employee-detail-item:last-child {
             grid-column: 1 / -1;
         }
-
         @media (max-width: 600px) {
             .employee-profile-avatar {
                 width: 76px;
@@ -310,7 +373,6 @@ $stmt->close();
                 <strong><?php echo htmlspecialchars($employee["status"]); ?></strong>
             </div>
         </div>
-
     </section>
 
     <!-- LEAVE BALANCE -->
@@ -434,17 +496,19 @@ $stmt->close();
     </section>
 </main>
 
-<!-- SAVE & RESTORE PROFILE SCROLL POSITION -->
 <script>
 window.addEventListener("beforeunload", function () {
     sessionStorage.setItem("employee_profile_scroll_position", window.scrollY);
 });
+
 window.addEventListener("load", function () {
     const savedPosition = sessionStorage.getItem("employee_profile_scroll_position");
+
     if (savedPosition !== null) {
         window.scrollTo(0, parseInt(savedPosition, 10));
     }
 });
 </script>
+
 </body>
 </html>
