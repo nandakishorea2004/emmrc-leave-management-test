@@ -1,11 +1,10 @@
-
 <?php
 session_start();
-require_once "../db.php";
+require_once __DIR__ . "/../db.php";
 
 /* =========================================================
    ADMIN ACCESS CHECK
-   ========================================================= */
+========================================================= */
 if (($_SESSION["role"] ?? "") !== "admin") {
     header("Location: ../index.php");
     exit();
@@ -13,7 +12,7 @@ if (($_SESSION["role"] ?? "") !== "admin") {
 
 /* =========================================================
    HELPER FUNCTIONS
-   ========================================================= */
+========================================================= */
 function showMessageAndRedirect(string $message, string $url = "enter_leave.php"): void
 {
     echo "<script>alert(" . json_encode($message) . ");window.location.href="
@@ -32,12 +31,13 @@ function returnUrl(string $from, string $employeeId): string
     if ($from === "profile" && $employeeId !== "") {
         return "enter_leave.php?id=" . rawurlencode($employeeId) . "&from=profile";
     }
+
     return "enter_leave.php";
 }
 
 /* =========================================================
    LOAD HOLIDAYS
-   ========================================================= */
+========================================================= */
 $holidays = [];
 $holidayDates = [];
 
@@ -47,23 +47,23 @@ $holidayStmt = $conn->prepare("
     ORDER BY holiday_date ASC
 ");
 $holidayStmt->execute();
-$holidayResult = $holidayStmt->get_result();
 
-while ($holiday = $holidayResult->fetch_assoc()) {
+foreach ($holidayStmt->fetchAll() as $holiday) {
     $holidays[] = [
         "date" => $holiday["holiday_date"],
         "day" => $holiday["day"],
         "description" => $holiday["description"],
         "type" => $holiday["source_type"]
     ];
+
     $holidayDates[] = $holiday["holiday_date"];
 }
-$holidayStmt->close();
 
 /* =========================================================
-   SAVE LEAVE RECORD SAFELY
-   ========================================================= */
+   SAVE LEAVE RECORD
+========================================================= */
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
+
     $formEmployeeId = trim($_POST["employee_id"] ?? "");
     $leaveTypeCode = strtoupper(trim($_POST["leave_type"] ?? ""));
     $fromDate = trim($_POST["from_date"] ?? "");
@@ -80,20 +80,23 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         !validDate($fromDate) ||
         !validDate($toDate)
     ) {
-        showMessageAndRedirect("Please fill all required leave details.", $redirectUrl);
+        showMessageAndRedirect(
+            "Please fill all required leave details.",
+            $redirectUrl
+        );
     }
 
     if ($toDate < $fromDate) {
-        showMessageAndRedirect("To Date cannot be earlier than From Date.", $redirectUrl);
+        showMessageAndRedirect(
+            "To Date cannot be earlier than From Date.",
+            $redirectUrl
+        );
     }
 
-    /*
-     * Calculate days on the server.
-     * CL excludes dates listed in the holidays table.
-     * Other leave types count all calendar days.
-     */
+    /* Calculate leave days */
     $start = new DateTime($fromDate);
     $end = new DateTime($toDate);
+
     $period = new DatePeriod(
         $start,
         new DateInterval("P1D"),
@@ -120,19 +123,21 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         );
     }
 
-    /* -----------------------------------------------------
-       GET ACTIVE EMPLOYEE
-       ----------------------------------------------------- */
+    /* =====================================================
+       GET EMPLOYEE
+    ===================================================== */
     $employeeStmt = $conn->prepare("
         SELECT id, employee_id, name, gender, status
         FROM employees
-        WHERE employee_id = ?
+        WHERE employee_id = :employee_id
         LIMIT 1
     ");
-    $employeeStmt->bind_param("s", $formEmployeeId);
-    $employeeStmt->execute();
-    $employee = $employeeStmt->get_result()->fetch_assoc();
-    $employeeStmt->close();
+
+    $employeeStmt->execute([
+        ":employee_id" => $formEmployeeId
+    ]);
+
+    $employee = $employeeStmt->fetch();
 
     if (!$employee) {
         showMessageAndRedirect("Employee record not found.", $redirectUrl);
@@ -144,19 +149,21 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
     $employeeDbId = (int)$employee["id"];
 
-    /* -----------------------------------------------------
-       GET ACTIVE LEAVE TYPE
-       ----------------------------------------------------- */
+    /* =====================================================
+       GET LEAVE TYPE
+    ===================================================== */
     $leaveTypeStmt = $conn->prepare("
         SELECT id, code, name
         FROM leave_types
-        WHERE code = ? AND status = 1
+        WHERE code = :code AND status = 1
         LIMIT 1
     ");
-    $leaveTypeStmt->bind_param("s", $leaveTypeCode);
-    $leaveTypeStmt->execute();
-    $leaveType = $leaveTypeStmt->get_result()->fetch_assoc();
-    $leaveTypeStmt->close();
+
+    $leaveTypeStmt->execute([
+        ":code" => $leaveTypeCode
+    ]);
+
+    $leaveType = $leaveTypeStmt->fetch();
 
     if (!$leaveType) {
         showMessageAndRedirect("Invalid or inactive leave type.", $redirectUrl);
@@ -164,10 +171,9 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
     $leaveTypeId = (int)$leaveType["id"];
 
-    /*
-     * Basic gender checks only.
-     * These checks do not establish full KSR eligibility.
-     */
+    /* =====================================================
+       GENDER CHECKS
+    ===================================================== */
     $gender = strtolower(trim((string)$employee["gender"]));
 
     if ($leaveTypeCode === "ML" && $gender !== "female") {
@@ -184,102 +190,67 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         );
     }
 
-    /*
-     * The current balance system uses the From Date year.
-     * Cross-year leave needs year-wise allocation if required
-     * by the applicable leave rules.
-     */
     $year = (int)date("Y", strtotime($fromDate));
     $createdBy = (int)($_SESSION["user_id"] ?? 0);
 
-    /* -----------------------------------------------------
+    /* =====================================================
        TRANSACTION
-       ----------------------------------------------------- */
+    ===================================================== */
     try {
-        $conn->begin_transaction();
 
+        $conn->beginTransaction();
 
-       // =====================================================
-// DUPLICATE LEAVE CHECK
-// =====================================================
+        /* =================================================
+           DUPLICATE LEAVE CHECK
+        ================================================= */
+        $duplicateStmt = $conn->prepare("
+            SELECT id
+            FROM leave_records
+            WHERE employee_id = :employee_id
+              AND leave_type_id = :leave_type_id
+              AND from_date = :from_date
+              AND to_date = :to_date
+              AND session_type = 'FULL'
+              AND status = 'ACTIVE'
+            LIMIT 1
+            FOR UPDATE
+        ");
 
-$duplicateStmt = $conn->prepare("
-    SELECT id
-    FROM leave_records
-    WHERE employee_id = ?
-      AND leave_type_id = ?
-      AND from_date = ?
-      AND to_date = ?
-      AND session_type = 'FULL'
-      AND status = 'ACTIVE'
-    LIMIT 1
-    FOR UPDATE
-");
+        $duplicateStmt->execute([
+            ":employee_id" => $employeeDbId,
+            ":leave_type_id" => $leaveTypeId,
+            ":from_date" => $fromDate,
+            ":to_date" => $toDate
+        ]);
 
+        if ($duplicateStmt->fetch()) {
+            throw new Exception(
+                "This exact leave has already been entered for this employee."
+            );
+        }
 
-if (!$duplicateStmt) {
-    throw new RuntimeException(
-        "Unable to prepare duplicate leave check: " . $conn->error
-    );
-}
-
-$duplicateStmt->bind_param(
-    "iiss",
-    $employeeDbId,
-    $leaveTypeId,
-    $fromDate,
-    $toDate
-);
-
-if (!$duplicateStmt->execute()) {
-    $error = $duplicateStmt->error;
-    $duplicateStmt->close();
-
-    throw new RuntimeException(
-        "Unable to check duplicate leave: " . $error
-    );
-}
-
-$duplicateResult = $duplicateStmt->get_result();
-
-if ($duplicateResult->num_rows > 0) {
-    $duplicateStmt->close();
-
-    throw new Exception(
-        "This exact leave has already been entered for this employee."
-    );
-}
-
-$duplicateStmt->close();
-
-// =====================================================
-// END DUPLICATE LEAVE CHECK
-// =====================================================
-
-
-        /*
-         * CL / EL / HPL:
-         * Check and lock the balance before recording leave.
-         */
+        /* =================================================
+           CL / EL / HPL BALANCE DEDUCTION
+        ================================================= */
         if (in_array($leaveTypeCode, ["CL", "EL", "HPL"], true)) {
+
             $balanceStmt = $conn->prepare("
                 SELECT id, used, closing_balance
                 FROM leave_balances
-                WHERE employee_id = ?
-                  AND leave_type_id = ?
-                  AND year = ?
+                WHERE employee_id = :employee_id
+                  AND leave_type_id = :leave_type_id
+                  AND year = :year
                 LIMIT 1
                 FOR UPDATE
             ");
-            $balanceStmt->bind_param(
-                "iii",
-                $employeeDbId,
-                $leaveTypeId,
-                $year
-            );
-            $balanceStmt->execute();
-            $balance = $balanceStmt->get_result()->fetch_assoc();
-            $balanceStmt->close();
+
+            $balanceStmt->execute([
+                ":employee_id" => $employeeDbId,
+                ":leave_type_id" => $leaveTypeId,
+                ":year" => $year
+            ]);
+
+            $balance = $balanceStmt->fetch();
 
             if (!$balance) {
                 throw new RuntimeException(
@@ -304,49 +275,43 @@ $duplicateStmt->close();
 
             $updateStmt = $conn->prepare("
                 UPDATE leave_balances
-                SET used = ?, closing_balance = ?
-                WHERE id = ?
+                SET used = :used,
+                    closing_balance = :closing_balance
+                WHERE id = :id
             ");
-            $updateStmt->bind_param(
-                "ddi",
-                $newUsed,
-                $newClosing,
-                $balanceId
-            );
-            if (!$updateStmt->execute()) {
-    throw new RuntimeException(
-        "Unable to update the " . $leaveTypeCode .
-        " balance: " . $updateStmt->error
-    );
-}
 
-if ($updateStmt->affected_rows !== 1) {
-    throw new RuntimeException(
-        "Expected to update one " . $leaveTypeCode .
-        " balance row, but updated " . $updateStmt->affected_rows . " rows."
-    );
-}
+            $updateStmt->execute([
+                ":used" => $newUsed,
+                ":closing_balance" => $newClosing,
+                ":id" => $balanceId
+            ]);
 
-$updateStmt->close();
+            if ($updateStmt->rowCount() !== 1) {
+                throw new RuntimeException(
+                    "Unable to update the " . $leaveTypeCode . " balance."
+                );
+            }
         }
 
-        /*
-         * COM:
-         * One day of COM deducts two days from HPL.
-         */
+        /* =================================================
+           COM - DEDUCT TWO HPL DAYS PER COM DAY
+        ================================================= */
         elseif ($leaveTypeCode === "COM") {
+
             $hplStmt = $conn->prepare("
                 SELECT id
                 FROM leave_types
                 WHERE code = 'HPL' AND status = 1
                 LIMIT 1
             ");
+
             $hplStmt->execute();
-            $hplType = $hplStmt->get_result()->fetch_assoc();
-            $hplStmt->close();
+            $hplType = $hplStmt->fetch();
 
             if (!$hplType) {
-                throw new RuntimeException("The active HPL leave type was not found.");
+                throw new RuntimeException(
+                    "The active HPL leave type was not found."
+                );
             }
 
             $hplTypeId = (int)$hplType["id"];
@@ -354,21 +319,20 @@ $updateStmt->close();
             $hplBalanceStmt = $conn->prepare("
                 SELECT id, used, closing_balance
                 FROM leave_balances
-                WHERE employee_id = ?
-                  AND leave_type_id = ?
-                  AND year = ?
+                WHERE employee_id = :employee_id
+                  AND leave_type_id = :leave_type_id
+                  AND year = :year
                 LIMIT 1
                 FOR UPDATE
             ");
-            $hplBalanceStmt->bind_param(
-                "iii",
-                $employeeDbId,
-                $hplTypeId,
-                $year
-            );
-            $hplBalanceStmt->execute();
-            $hplBalance = $hplBalanceStmt->get_result()->fetch_assoc();
-            $hplBalanceStmt->close();
+
+            $hplBalanceStmt->execute([
+                ":employee_id" => $employeeDbId,
+                ":leave_type_id" => $hplTypeId,
+                ":year" => $year
+            ]);
+
+            $hplBalance = $hplBalanceStmt->fetch();
 
             if (!$hplBalance) {
                 throw new RuntimeException(
@@ -382,7 +346,8 @@ $updateStmt->close();
             if ($currentHpl < $hplDaysToDeduct) {
                 throw new RuntimeException(
                     "Insufficient HPL balance for commuted leave. Available: " .
-                    $currentHpl . " days; required: " . $hplDaysToDeduct . " days."
+                    $currentHpl . " days; required: " .
+                    $hplDaysToDeduct . " days."
                 );
             }
 
@@ -392,176 +357,136 @@ $updateStmt->close();
 
             $updateHplStmt = $conn->prepare("
                 UPDATE leave_balances
-                SET used = ?, closing_balance = ?
-                WHERE id = ?
+                SET used = :used,
+                    closing_balance = :closing_balance
+                WHERE id = :id
             ");
-            $updateHplStmt->bind_param(
-                "ddi",
-                $newHplUsed,
-                $newHplClosing,
-                $hplBalanceId
-            );
-            if (!$updateHplStmt->execute()) {
-    throw new RuntimeException(
-        "Unable to update the HPL balance: " . $updateHplStmt->error
-    );
-}
 
-if ($updateHplStmt->affected_rows !== 1) {
-    throw new RuntimeException(
-        "Expected to update one HPL balance row, but updated " .
-        $updateHplStmt->affected_rows . " rows."
-    );
-}
+            $updateHplStmt->execute([
+                ":used" => $newHplUsed,
+                ":closing_balance" => $newHplClosing,
+                ":id" => $hplBalanceId
+            ]);
 
-$updateHplStmt->close();
+            if ($updateHplStmt->rowCount() !== 1) {
+                throw new RuntimeException(
+                    "Unable to update the HPL balance."
+                );
+            }
         }
 
-        /*
-         * Insert the leave record only after balance checks
-         * and balance updates have succeeded.
-         */
+        /* =================================================
+           INSERT LEAVE RECORD
+        ================================================= */
+        $balanceDeducted = in_array(
+            $leaveTypeCode,
+            ["CL", "EL", "HPL", "COM"],
+            true
+        ) ? 1 : 0;
 
-/*
- * Track whether this leave actually deducted a balance.
- *
- * CL, EL, HPL: their own balance was deducted.
- * COM: HPL balance was deducted.
- * SCL, LWA, ML, PL: no balance deduction.
- */
-$balanceDeducted = in_array(
-    $leaveTypeCode,
-    ["CL", "EL", "HPL", "COM"],
-    true
-) ? 1 : 0;
+        $balanceRestored = 0;
 
-$balanceRestored = 0;
+        $saveStmt = $conn->prepare("
+            INSERT INTO leave_records
+            (
+                employee_id,
+                leave_type_id,
+                from_date,
+                to_date,
+                days_taken,
+                session_type,
+                status,
+                balance_deducted,
+                balance_restored,
+                reason,
+                remarks,
+                created_by
+            )
+            VALUES (
+                :employee_id,
+                :leave_type_id,
+                :from_date,
+                :to_date,
+                :days_taken,
+                'FULL',
+                'ACTIVE',
+                :balance_deducted,
+                :balance_restored,
+                :reason,
+                :remarks,
+                :created_by
+            )
+        ");
 
-$saveStmt = $conn->prepare("
-    INSERT INTO leave_records
-    (
-        employee_id,
-        leave_type_id,
-        from_date,
-        to_date,
-        days_taken,
-        session_type,
-        status,
-        balance_deducted,
-        balance_restored,
-        reason,
-        remarks,
-        created_by
-    )
-    VALUES (?, ?, ?, ?, ?, 'FULL', 'ACTIVE', ?, ?, ?, ?, ?)
-");
+        $saveStmt->execute([
+            ":employee_id" => $employeeDbId,
+            ":leave_type_id" => $leaveTypeId,
+            ":from_date" => $fromDate,
+            ":to_date" => $toDate,
+            ":days_taken" => $daysTaken,
+            ":balance_deducted" => $balanceDeducted,
+            ":balance_restored" => $balanceRestored,
+            ":reason" => $reason,
+            ":remarks" => $remarks,
+            ":created_by" => $createdBy
+        ]);
 
-if (!$saveStmt) {
-    throw new RuntimeException(
-        "Unable to prepare leave record: " . $conn->error
-    );
-}
-
-$saveStmt->bind_param(
-    "iissdiissi",
-    $employeeDbId,
-    $leaveTypeId,
-    $fromDate,
-    $toDate,
-    $daysTaken,
-    $balanceDeducted,
-    $balanceRestored,
-    $reason,
-    $remarks,
-    $createdBy
-);
-
-if (!$saveStmt->execute()) {
-    throw new RuntimeException(
-        "Unable to save leave record: " . $saveStmt->error
-    );
-}
-
-$saveStmt->close();
-
-
-        /*
-         * A newly entered leave can invalidate EL cycles that were
-         * credited earlier. Mark every overlapping cycle as having
-         * leave, then reverse each original credit exactly once.
-         *
-         * The reversal is part of this transaction. If any balance
-         * row cannot be updated, the leave entry is rolled back too.
-         */
+        /* =================================================
+           MARK OVERLAPPING EL CYCLES
+        ================================================= */
         $markCyclesStmt = $conn->prepare("
             UPDATE el_cycles
             SET leave_occurred = 1
-            WHERE employee_id = ?
-              AND cycle_start_date <= ?
-              AND cycle_end_date >= ?
+            WHERE employee_id = :employee_id
+              AND cycle_start_date <= :to_date
+              AND cycle_end_date >= :from_date
         ");
-        if (!$markCyclesStmt) {
-            throw new RuntimeException("Unable to prepare EL cycle update.");
-        }
-        $markCyclesStmt->bind_param(
-            "iss",
-            $employeeDbId,
-            $toDate,
-            $fromDate
-        );
-        if (!$markCyclesStmt->execute()) {
-            throw new RuntimeException("Unable to mark overlapping EL cycles.");
-        }
-        $markCyclesStmt->close();
 
-        /*
-         * Lock credited, not-yet-reversed cycles that overlap this leave.
-         */
+        $markCyclesStmt->execute([
+            ":employee_id" => $employeeDbId,
+            ":to_date" => $toDate,
+            ":from_date" => $fromDate
+        ]);
+
+        /* =================================================
+           FIND EL CREDITS TO REVERSE
+        ================================================= */
         $cyclesStmt = $conn->prepare("
             SELECT
                 id,
                 el_credited,
                 COALESCE(credited_year, YEAR(cycle_end_date)) AS credit_year
             FROM el_cycles
-            WHERE employee_id = ?
-              AND cycle_start_date <= ?
-              AND cycle_end_date >= ?
+            WHERE employee_id = :employee_id
+              AND cycle_start_date <= :to_date
+              AND cycle_end_date >= :from_date
               AND el_credited > 0
               AND el_reversed = 0
             FOR UPDATE
         ");
-        if (!$cyclesStmt) {
-            throw new RuntimeException("Unable to prepare EL reversal query.");
-        }
-        $cyclesStmt->bind_param(
-            "iss",
-            $employeeDbId,
-            $toDate,
-            $fromDate
-        );
-        if (!$cyclesStmt->execute()) {
-            throw new RuntimeException("Unable to find overlapping EL credits.");
-        }
-        $cyclesResult = $cyclesStmt->get_result();
-        $cyclesToReverse = [];
-        while ($cycleRow = $cyclesResult->fetch_assoc()) {
-            $cyclesToReverse[] = $cycleRow;
-        }
-        $cyclesStmt->close();
 
-        if ($cyclesToReverse) {
+        $cyclesStmt->execute([
+            ":employee_id" => $employeeDbId,
+            ":to_date" => $toDate,
+            ":from_date" => $fromDate
+        ]);
+
+        $cyclesToReverse = $cyclesStmt->fetchAll();
+
+        /* =================================================
+           REVERSE EL CREDITS
+        ================================================= */
+        if (!empty($cyclesToReverse)) {
+
             $elTypeStmt = $conn->prepare("
                 SELECT id
                 FROM leave_types
                 WHERE code = 'EL'
                 LIMIT 1
             ");
-            if (!$elTypeStmt) {
-                throw new RuntimeException("Unable to prepare EL leave type query.");
-            }
+
             $elTypeStmt->execute();
-            $elTypeRow = $elTypeStmt->get_result()->fetch_assoc();
-            $elTypeStmt->close();
+            $elTypeRow = $elTypeStmt->fetch();
 
             if (!$elTypeRow) {
                 throw new RuntimeException("EL leave type was not found.");
@@ -570,6 +495,7 @@ $saveStmt->close();
             $elTypeId = (int)$elTypeRow["id"];
 
             foreach ($cyclesToReverse as $cycleRow) {
+
                 $cycleId = (int)$cycleRow["id"];
                 $creditToReverse = (float)$cycleRow["el_credited"];
                 $creditYear = (int)$cycleRow["credit_year"];
@@ -580,31 +506,23 @@ $saveStmt->close();
                     );
                 }
 
-                /*
-                 * Always reverse against the year that originally
-                 * received this cycle's EL credit, not the leave year.
-                 */
                 $elBalanceStmt = $conn->prepare("
                     SELECT id, credited, closing_balance
                     FROM leave_balances
-                    WHERE employee_id = ?
-                      AND leave_type_id = ?
-                      AND year = ?
+                    WHERE employee_id = :employee_id
+                      AND leave_type_id = :leave_type_id
+                      AND year = :year
                     LIMIT 1
                     FOR UPDATE
                 ");
-                if (!$elBalanceStmt) {
-                    throw new RuntimeException("Unable to prepare EL balance lookup.");
-                }
-                $elBalanceStmt->bind_param(
-                    "iii",
-                    $employeeDbId,
-                    $elTypeId,
-                    $creditYear
-                );
-                $elBalanceStmt->execute();
-                $elBalance = $elBalanceStmt->get_result()->fetch_assoc();
-                $elBalanceStmt->close();
+
+                $elBalanceStmt->execute([
+                    ":employee_id" => $employeeDbId,
+                    ":leave_type_id" => $elTypeId,
+                    ":year" => $creditYear
+                ]);
+
+                $elBalance = $elBalanceStmt->fetch();
 
                 if (!$elBalance) {
                     throw new RuntimeException(
@@ -614,6 +532,7 @@ $saveStmt->close();
                 }
 
                 $creditedTotal = (float)$elBalance["credited"];
+
                 if ($creditedTotal + 0.00001 < $creditToReverse) {
                     throw new RuntimeException(
                         "The EL credited total for " . $creditYear .
@@ -623,64 +542,74 @@ $saveStmt->close();
 
                 $elBalanceId = (int)$elBalance["id"];
                 $newCreditedTotal = $creditedTotal - $creditToReverse;
-                $newElClosing = (float)$elBalance["closing_balance"] - $creditToReverse;
+                $newElClosing =
+                    (float)$elBalance["closing_balance"] - $creditToReverse;
 
                 $reverseBalanceStmt = $conn->prepare("
                     UPDATE leave_balances
-                    SET credited = ?, closing_balance = ?
-                    WHERE id = ?
+                    SET credited = :credited,
+                        closing_balance = :closing_balance
+                    WHERE id = :id
                 ");
-                if (!$reverseBalanceStmt) {
-                    throw new RuntimeException("Unable to prepare EL balance reversal.");
-                }
-                $reverseBalanceStmt->bind_param(
-                    "ddi",
-                    $newCreditedTotal,
-                    $newElClosing,
-                    $elBalanceId
-                );
-                if (!$reverseBalanceStmt->execute()) {
-                    throw new RuntimeException("Unable to reverse the EL balance.");
-                }
-                $reverseBalanceStmt->close();
 
-                /*
-                 * Keep el_credited unchanged for the audit trail.
-                 * The flag prevents a second reversal of this cycle.
-                 */
+                $reverseBalanceStmt->execute([
+                    ":credited" => $newCreditedTotal,
+                    ":closing_balance" => $newElClosing,
+                    ":id" => $elBalanceId
+                ]);
+
+                if ($reverseBalanceStmt->rowCount() !== 1) {
+                    throw new RuntimeException(
+                        "Unable to reverse the EL balance."
+                    );
+                }
+
                 $markReversedStmt = $conn->prepare("
                     UPDATE el_cycles
                     SET el_reversed = 1,
                         reversed_at = NOW()
-                    WHERE id = ?
+                    WHERE id = :id
                       AND el_reversed = 0
                 ");
-                if (!$markReversedStmt) {
-                    throw new RuntimeException("Unable to prepare EL reversal audit update.");
+
+                $markReversedStmt->execute([
+                    ":id" => $cycleId
+                ]);
+
+                if ($markReversedStmt->rowCount() !== 1) {
+                    throw new RuntimeException(
+                        "The EL cycle could not be marked as reversed."
+                    );
                 }
-                $markReversedStmt->bind_param("i", $cycleId);
-                if (!$markReversedStmt->execute() || $markReversedStmt->affected_rows !== 1) {
-                    throw new RuntimeException("The EL cycle could not be marked as reversed.");
-                }
-                $markReversedStmt->close();
             }
         }
 
+        /* =================================================
+           COMMIT TRANSACTION
+        ================================================= */
         $conn->commit();
 
         showMessageAndRedirect(
-            "Leave record saved successfully. Days recorded: " . $daysTaken . ".",
+            "Leave record saved successfully. Days recorded: " .
+            $daysTaken . ".",
             $redirectUrl
         );
+
     } catch (Throwable $e) {
-        $conn->rollback();
+
+        if ($conn->inTransaction()) {
+            $conn->rollBack();
+        }
+
+        error_log("Enter leave error: " . $e->getMessage());
+
         showMessageAndRedirect($e->getMessage(), $redirectUrl);
     }
 }
 
 /* =========================================================
    LOAD ACTIVE EMPLOYEES
-   ========================================================= */
+========================================================= */
 $employees = [];
 
 $employeeStmt = $conn->prepare("
@@ -689,10 +618,11 @@ $employeeStmt = $conn->prepare("
     WHERE status = 'active'
     ORDER BY employee_id ASC
 ");
-$employeeStmt->execute();
-$employeeResult = $employeeStmt->get_result();
 
-while ($row = $employeeResult->fetch_assoc()) {
+$employeeStmt->execute();
+
+foreach ($employeeStmt->fetchAll() as $row) {
+
     $employees[$row["employee_id"]] = [
         "name" => $row["name"],
         "designation" => $row["designation"],
@@ -705,11 +635,10 @@ while ($row = $employeeResult->fetch_assoc()) {
         ]
     ];
 }
-$employeeStmt->close();
 
 /* =========================================================
    LOAD CURRENT-YEAR BALANCES
-   ========================================================= */
+========================================================= */
 $balanceStmt = $conn->prepare("
     SELECT e.employee_id, lt.code, lb.closing_balance
     FROM leave_balances lb
@@ -718,10 +647,11 @@ $balanceStmt = $conn->prepare("
     WHERE e.status = 'active'
       AND lb.year = YEAR(CURDATE())
 ");
-$balanceStmt->execute();
-$balanceResult = $balanceStmt->get_result();
 
-while ($row = $balanceResult->fetch_assoc()) {
+$balanceStmt->execute();
+
+foreach ($balanceStmt->fetchAll() as $row) {
+
     $code = $row["employee_id"];
     $leaveCode = $row["code"];
 
@@ -730,30 +660,30 @@ while ($row = $balanceResult->fetch_assoc()) {
             (float)$row["closing_balance"];
     }
 }
-$balanceStmt->close();
 
 /* =========================================================
    SELECTED EMPLOYEE AND RETURN LOCATION
-   ========================================================= */
+========================================================= */
 $employee_id = trim($_GET["id"] ?? "");
 $from = $_GET["from"] ?? "admin";
+
 $selected_employee = $employees[$employee_id] ?? null;
 
-/* Load leave types for the dropdown. */
+/* =========================================================
+   LOAD ACTIVE LEAVE TYPES
+========================================================= */
 $leaveTypes = [];
+
 $typeStmt = $conn->prepare("
     SELECT code, name
     FROM leave_types
     WHERE status = 1
     ORDER BY id ASC
 ");
-$typeStmt->execute();
-$typeResult = $typeStmt->get_result();
 
-while ($row = $typeResult->fetch_assoc()) {
-    $leaveTypes[] = $row;
-}
-$typeStmt->close();
+$typeStmt->execute();
+$leaveTypes = $typeStmt->fetchAll();
+
 ?>
 <!DOCTYPE html>
 <html lang="en">
