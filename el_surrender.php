@@ -1,3 +1,4 @@
+
 <?php
 
 /* =========================================================
@@ -6,7 +7,7 @@
 
 session_start();
 
-require_once "db.php";
+require_once __DIR__ . "/db.php";
 
 
 /* =========================================================
@@ -32,11 +33,6 @@ if ($role !== "employee" && $role !== "admin") {
 
 if ($role === "employee") {
 
-    /*
-     * Employee can only submit surrender
-     * for their own employee ID.
-     */
-
     if (!isset($_SESSION["employee_id"])) {
         header("Location: index.php");
         exit();
@@ -47,14 +43,6 @@ if ($role === "employee") {
     $from = "employee";
 
 } elseif ($role === "admin") {
-
-    /*
-     * Admin can access an employee from
-     * the employee profile.
-     *
-     * POST fallback is used so the employee
-     * information is not lost after submission.
-     */
 
     $employee_id = trim(
         $_GET["id"] ??
@@ -68,12 +56,9 @@ if ($role === "employee") {
         "employee";
 
     if ($employee_id === "") {
-
         header("Location: admin/employees.php");
         exit();
-
     }
-
 }
 
 
@@ -93,18 +78,9 @@ $stmt = $conn->prepare("
     LIMIT 1
 ");
 
-$stmt->bind_param(
-    "s",
-    $employee_id
-);
+$stmt->execute([$employee_id]);
 
-$stmt->execute();
-
-$result = $stmt->get_result();
-
-$employee = $result->fetch_assoc();
-
-$stmt->close();
+$employee = $stmt->fetch(PDO::FETCH_ASSOC);
 
 
 /* =========================================================
@@ -114,23 +90,18 @@ $stmt->close();
 if (!$employee) {
 
     if ($role === "admin") {
-
         header("Location: admin/employees.php");
-
     } else {
-
         header("Location: index.php");
-
     }
 
     exit();
-
 }
 
 
 $employee_db_id = (int)$employee["id"];
 
-$current_year = (int)date("Y"); // Keep for EL balance lookup.
+$current_year = (int)date("Y");
 
 $current_month = (int)date("n");
 
@@ -141,6 +112,7 @@ $current_financial_year_start =
 
 $current_financial_year_end =
     $current_financial_year_start + 1;
+
 
 /* =========================================================
    MESSAGE
@@ -161,39 +133,24 @@ $balance_stmt = $conn->prepare("
     SELECT
         lb.closing_balance
     FROM leave_balances lb
-
     INNER JOIN leave_types lt
         ON lb.leave_type_id = lt.id
-
     WHERE lb.employee_id = ?
       AND lt.code = 'EL'
       AND lb.year = ?
-
     LIMIT 1
 ");
 
-$balance_stmt->bind_param(
-    "ii",
+$balance_stmt->execute([
     $employee_db_id,
     $current_year
-);
+]);
 
-$balance_stmt->execute();
-
-$balance_result =
-    $balance_stmt->get_result();
-
-$balance_row =
-    $balance_result->fetch_assoc();
+$balance_row = $balance_stmt->fetch(PDO::FETCH_ASSOC);
 
 if ($balance_row) {
-
-    $el_balance =
-        (float)$balance_row["closing_balance"];
-
+    $el_balance = (float)$balance_row["closing_balance"];
 }
-
-$balance_stmt->close();
 
 
 /* =========================================================
@@ -204,8 +161,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
     /*
      * Preserve employee ID from POST.
-     * For employees, it must still match
-     * the logged-in employee.
+     * For employees, it must match the logged-in employee.
      */
 
     if ($role === "employee") {
@@ -218,13 +174,9 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             (string)$_SESSION["employee_id"]
         ) {
 
-            $message =
-                "Invalid employee information.";
-
+            $message = "Invalid employee information.";
             $message_type = "error";
-
         }
-
     }
 
 
@@ -234,37 +186,29 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
     if ($message === "") {
 
-        $days =
-            (int)($_POST["days"] ?? 0);
+        $days = (int)($_POST["days"] ?? 0);
 
-        $surrender_date =
-            trim(
-                $_POST["surrender_date"] ?? ""
-            );
+        $surrender_date = trim(
+            $_POST["surrender_date"] ?? ""
+        );
 
-        $remarks =
-            trim(
-                $_POST["remarks"] ?? ""
-            );
+        $remarks = trim(
+            $_POST["remarks"] ?? ""
+        );
 
 
         /* =================================================
            BASIC VALIDATION
            ================================================= */
 
-        if (
-            $days < 1 ||
-            $days > 30
-        ) {
+        if ($days < 1 || $days > 30) {
 
             $message =
                 "Surrender days must be between 1 and 30.";
 
             $message_type = "error";
 
-        } elseif (
-            $surrender_date === ""
-        ) {
+        } elseif ($surrender_date === "") {
 
             $message =
                 "Please select the surrender date.";
@@ -278,47 +222,42 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                VALIDATE DATE
                ============================================= */
 
-            $date_object =
-                DateTime::createFromFormat(
-                    "Y-m-d",
-                    $surrender_date
-                );
+            $date_object = DateTime::createFromFormat(
+                "!Y-m-d",
+                $surrender_date
+            );
 
-            $valid_date =
+            $valid_date = (
                 $date_object &&
-                $date_object->format("Y-m-d") ===
-                $surrender_date;
+                $date_object->format("Y-m-d") === $surrender_date
+            );
 
 
             if (!$valid_date) {
 
-                $message =
-                    "Invalid surrender date.";
-
+                $message = "Invalid surrender date.";
                 $message_type = "error";
 
             } elseif (
                 $surrender_date <
-                 sprintf(
-                      "%04d-04-01",
-                      $current_financial_year_start
-                    )
-                   ||
-                    $surrender_date >=
                     sprintf(
-                       "%04d-04-01",
+                        "%04d-04-01",
+                        $current_financial_year_start
+                    )
+                ||
+                $surrender_date >=
+                    sprintf(
+                        "%04d-04-01",
                         $current_financial_year_end
                     )
-                ) {
-
-                  $message =
-                     "Surrender date must be within the current financial year (April 1 to March 31).";
-
-                    $message_type = "error";
-
-            } elseif (
-                $days > $el_balance
             ) {
+
+                $message =
+                    "Surrender date must be within the current financial year (April 1 to March 31).";
+
+                $message_type = "error";
+
+            } elseif ($days > $el_balance) {
 
                 $message =
                     "Surrender days cannot exceed the current EL balance.";
@@ -351,43 +290,29 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                       AND status IN ('PENDING', 'APPROVED')
                 ");
 
-                $used_stmt->bind_param(
-                    "iss",
+                $used_stmt->execute([
                     $employee_db_id,
                     $financial_year_start_date,
                     $financial_year_end_date
+                ]);
+
+                $used_row = $used_stmt->fetch(PDO::FETCH_ASSOC);
+
+                $used_days = (float)(
+                    $used_row["total_days"] ?? 0
                 );
-
-                $used_stmt->execute();
-
-                $used_result =
-                    $used_stmt->get_result();
-
-                $used_row =
-                    $used_result->fetch_assoc();
-
-                $used_days =
-                    (float)(
-                        $used_row["total_days"]
-                        ?? 0
-                    );
-
-                $used_stmt->close();
 
 
                 /* =========================================
                    CHECK REMAINING YEARLY LIMIT
                    ========================================= */
 
-                if (
-                    ($used_days + $days) > 30
-                ) {
+                if (($used_days + $days) > 30) {
 
-                    $remaining =
-                        max(
-                            0,
-                            30 - $used_days
-                        );
+                    $remaining = max(
+                        0,
+                        30 - $used_days
+                    );
 
                     $message =
                         "Only " .
@@ -408,19 +333,9 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                         $from === "profile"
                     ) {
 
-                        /*
-                         * Admin recording directly
-                         * from employee profile.
-                         */
-
                         $status = "APPROVED";
 
                     } else {
-
-                        /*
-                         * Employee request requires
-                         * admin approval.
-                         */
 
                         $status = "PENDING";
 
@@ -431,10 +346,9 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                        DATABASE TRANSACTION
                        ===================================== */
 
-                    $conn->begin_transaction();
-
-
                     try {
+
+                        $conn->beginTransaction();
 
 
                         /* =================================
@@ -451,40 +365,17 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                                 status,
                                 remarks
                             )
-                            VALUES
-                            (
-                                ?,
-                                ?,
-                                ?,
-                                ?,
-                                ?,
-                                ?
-                            )
+                            VALUES (?, ?, ?, ?, ?, ?)
                         ");
 
-                        $insert_stmt->bind_param(
-                            "isiiss",
+                        $insert_stmt->execute([
                             $employee_db_id,
                             $surrender_date,
                             $current_financial_year_start,
                             $days,
                             $status,
                             $remarks
-                        );
-
-
-                        if (
-                            !$insert_stmt->execute()
-                        ) {
-
-                            throw new Exception(
-                                "Unable to save the surrender request."
-                            );
-
-                        }
-
-
-                        $insert_stmt->close();
+                        ]);
 
 
                         /* =================================
@@ -492,65 +383,44 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                            DEDUCT EL
                            ================================= */
 
-                        if (
-                            $status === "APPROVED"
-                        ) {
+                        if ($status === "APPROVED") {
 
                             $update_stmt = $conn->prepare("
-                                UPDATE leave_balances lb
-
-                                INNER JOIN leave_types lt
-                                    ON lb.leave_type_id = lt.id
-
+                                UPDATE leave_balances
                                 SET
-                                    lb.surrendered =
-                                        lb.surrendered + ?,
-
-                                    lb.closing_balance =
-                                        lb.closing_balance - ?
-
-                                WHERE lb.employee_id = ?
-
-                                  AND lt.code = 'EL'
-
-                                  AND lb.year = ?
-
-                                  AND lb.closing_balance >= ?
+                                    surrendered = surrendered + ?,
+                                    closing_balance = closing_balance - ?
+                                WHERE employee_id = ?
+                                  AND year = ?
+                                  AND closing_balance >= ?
+                                  AND leave_type_id = (
+                                      SELECT id
+                                      FROM leave_types
+                                      WHERE code = 'EL'
+                                      LIMIT 1
+                                  )
                             ");
 
-                            $update_stmt->bind_param(
-                                "ddiid",
+                            $update_stmt->execute([
                                 $days,
                                 $days,
                                 $employee_db_id,
                                 $current_year,
                                 $days
-                            );
+                            ]);
 
-
-                            if (
-                                !$update_stmt->execute() ||
-                                $update_stmt->affected_rows < 1
-                            ) {
-
-                                $update_stmt->close();
+                            if ($update_stmt->rowCount() < 1) {
 
                                 throw new Exception(
                                     "Unable to update the EL balance."
                                 );
-
                             }
-
-
-                            $update_stmt->close();
-
 
                             /*
                              * Update displayed balance.
                              */
 
                             $el_balance -= $days;
-
                         }
 
 
@@ -561,9 +431,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                         $conn->commit();
 
 
-                        if (
-                            $status === "APPROVED"
-                        ) {
+                        if ($status === "APPROVED") {
 
                             $message =
                                 "EL surrender recorded successfully. " .
@@ -577,21 +445,21 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
                         }
 
-
                         $message_type = "success";
 
 
                     } catch (Throwable $e) {
 
+                        if ($conn->inTransaction()) {
+                            $conn->rollBack();
+                        }
 
-                        $conn->rollback();
+                        error_log(
+                            "EL surrender error: " . $e->getMessage()
+                        );
 
-
-                        $message =
-                            $e->getMessage();
-
+                        $message = $e->getMessage();
                         $message_type = "error";
-
                     }
 
                 }
@@ -617,41 +485,19 @@ $history_stmt = $conn->prepare("
         days,
         remarks,
         status
-
     FROM el_surrender
-
     WHERE employee_id = ?
-
     ORDER BY
         surrender_date DESC,
         id DESC
 ");
 
-$history_stmt->bind_param(
-    "i",
-    $employee_db_id
-);
+$history_stmt->execute([$employee_db_id]);
 
-$history_stmt->execute();
-
-$history_result =
-    $history_stmt->get_result();
-
-
-while (
-    $row =
-    $history_result->fetch_assoc()
-) {
-
-    $surrender_history[] =
-        $row;
-
-}
-
-
-$history_stmt->close();
+$surrender_history = $history_stmt->fetchAll(PDO::FETCH_ASSOC);
 
 ?>
+
 
 <!DOCTYPE html>
 <html lang="en">
