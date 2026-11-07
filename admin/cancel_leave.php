@@ -1,8 +1,9 @@
 
 <?php
+
 session_start();
 
-require_once "../db.php";
+require_once __DIR__ . "/../db.php";
 
 // Admin access check
 if (($_SESSION["role"] ?? "") !== "admin") {
@@ -17,7 +18,7 @@ if (!isset($_GET["id"]) || !filter_var($_GET["id"], FILTER_VALIDATE_INT)) {
 
 $leaveId = (int) $_GET["id"];
 
-// Fetch leave details
+// Fetch leave details using PDO
 $stmt = $conn->prepare("
     SELECT
         lr.id,
@@ -32,16 +33,15 @@ $stmt = $conn->prepare("
     FROM leave_records lr
     INNER JOIN employees e ON e.id = lr.employee_id
     INNER JOIN leave_types lt ON lt.id = lr.leave_type_id
-    WHERE lr.id = ?
+    WHERE lr.id = :leave_id
     LIMIT 1
 ");
 
-$stmt->bind_param("i", $leaveId);
-$stmt->execute();
+$stmt->execute([
+    ":leave_id" => $leaveId
+]);
 
-$result = $stmt->get_result();
-$leave = $result->fetch_assoc();
-$stmt->close();
+$leave = $stmt->fetch();
 
 if (!$leave) {
     die("Leave record not found.");
@@ -50,7 +50,9 @@ if (!$leave) {
 if (empty($_SESSION["cancel_leave_csrf"])) {
     $_SESSION["cancel_leave_csrf"] = bin2hex(random_bytes(32));
 }
+
 ?>
+
 
 <!DOCTYPE html>
 <html lang="en">
