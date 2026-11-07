@@ -1,8 +1,9 @@
+
 <?php
 
 session_start();
 
-require_once "../db.php";
+require_once __DIR__ . "/../db.php";
 
 if (!isset($_SESSION["role"]) || $_SESSION["role"] !== "admin") {
     header("Location: ../index.php");
@@ -10,8 +11,8 @@ if (!isset($_SESSION["role"]) || $_SESSION["role"] !== "admin") {
 }
 
 /* =========================================================
-   FETCH EMPLOYEES FROM MYSQL
-   ========================================================= */
+   FETCH EMPLOYEES FROM DATABASE USING PDO
+========================================================= */
 
 $employees = [];
 
@@ -28,19 +29,14 @@ $sql = "
     ORDER BY name ASC
 ";
 
-$result = $conn->query($sql);
+$stmt = $conn->prepare($sql);
+$stmt->execute();
 
-if (!$result) {
-    die("Unable to load employees. Please check the database query.");
-}
-
-while ($row = $result->fetch_assoc()) {
-    $employees[] = $row;
-}
+$employees = $stmt->fetchAll();
 
 /* =========================================================
    SEARCH & FILTER VALUES
-   ========================================================= */
+========================================================= */
 
 $search = trim($_GET["search"] ?? "");
 $department_filter = trim($_GET["department"] ?? "");
@@ -48,7 +44,7 @@ $designation_filter = trim($_GET["designation"] ?? "");
 
 /* =========================================================
    FILTER EMPLOYEES
-   ========================================================= */
+========================================================= */
 
 $filtered_employees = [];
 
@@ -59,6 +55,7 @@ foreach ($employees as $employee) {
     $matches_designation = true;
 
     if ($search !== "") {
+
         $search_lower = strtolower($search);
 
         $matches_search =
@@ -87,12 +84,13 @@ foreach ($employees as $employee) {
 
 /* =========================================================
    FILTER OPTIONS
-   ========================================================= */
+========================================================= */
 
 $departments = [];
 $designations = [];
 
 foreach ($employees as $employee) {
+
     $departments[] = $employee["department"];
     $designations[] = $employee["designation"];
 }
@@ -105,11 +103,12 @@ sort($designations);
 
 /* =========================================================
    ADMIN DETAILS
-   ========================================================= */
+========================================================= */
 
 $admin_name = "Admin";
 
 ?>
+
 
 <!DOCTYPE html>
 <html lang="en">
