@@ -139,6 +139,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         $statements = splitSqlStatements($sql);
 
+        $dbName = $conn->query('SELECT DATABASE()')->fetchColumn();
+
+$check = $conn->prepare(
+    'SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = ?'
+);
+$check->execute([$dbName]);
+
+if ((int) $check->fetchColumn() > 0) {
+    throw new RuntimeException(
+        'Target database is not empty. Import cancelled.'
+    );
+}
+
         $conn->exec('SET FOREIGN_KEY_CHECKS=0');
 
         $count = 0;
