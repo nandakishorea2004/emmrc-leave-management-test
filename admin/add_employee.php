@@ -1,7 +1,8 @@
+
 <?php
 
 session_start();
-require_once "../db.php";
+require_once __DIR__ . "/../db.php";
 
 if (!isset($_SESSION["role"]) || $_SESSION["role"] !== "admin") {
     header("Location: ../index.php");
@@ -30,24 +31,25 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
     $gender = trim($_POST["gender"] ?? "");
     $joining_date = trim($_POST["joining_date"] ?? "");
     $status = $_POST["status"] ?? "active";
+
     $initial_cl = trim($_POST["initial_cl"] ?? "20");
-$initial_el = trim($_POST["initial_el"] ?? "30");
-$initial_hpl = trim($_POST["initial_hpl"] ?? "20");
+    $initial_el = trim($_POST["initial_el"] ?? "30");
+    $initial_hpl = trim($_POST["initial_hpl"] ?? "20");
 
-$initial_balances = [
-    "CL" => $initial_cl,
-    "EL" => $initial_el,
-    "HPL" => $initial_hpl
-];
+    $initial_balances = [
+        "CL" => $initial_cl,
+        "EL" => $initial_el,
+        "HPL" => $initial_hpl
+    ];
 
-foreach ($initial_balances as $code => $amount) {
-    if (
-        !preg_match('/^\d{1,4}(\.\d{1,2})?$/', $amount) ||
-        (float)$amount > 9999.99
-    ) {
-        $errors[] = "Enter a valid initial $code balance (0 to 9999.99).";
+    foreach ($initial_balances as $code => $amount) {
+        if (
+            !preg_match('/^\d{1,4}(\.\d{1,2})?$/', $amount) ||
+            (float)$amount > 9999.99
+        ) {
+            $errors[] = "Enter a valid initial $code balance (0 to 9999.99).";
+        }
     }
-}
 
     if ($employee_id === "" || !preg_match('/^[A-Za-z0-9_-]{1,20}$/', $employee_id)) {
         $errors[] = "Enter a valid Employee ID (up to 20 letters, numbers, _ or -).";
@@ -85,34 +87,41 @@ foreach ($initial_balances as $code => $amount) {
         $errors[] = "Select a valid employee status.";
     }
 
+    // Check duplicate employee ID.
     if (!$errors) {
         $stmt = $conn->prepare(
-            "SELECT id FROM employees WHERE employee_id = ? LIMIT 1"
+            "SELECT id FROM employees WHERE employee_id = :employee_id LIMIT 1"
         );
-        $stmt->bind_param("s", $employee_id);
-        $stmt->execute();
-        $existing = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
+
+        $stmt->execute([
+            ":employee_id" => $employee_id
+        ]);
+
+        $existing = $stmt->fetch();
 
         if ($existing) {
             $errors[] = "This Employee ID already exists.";
         }
     }
 
+    // Check duplicate login username.
     if (!$errors) {
         $stmt = $conn->prepare(
-            "SELECT id FROM users WHERE username = ? LIMIT 1"
+            "SELECT id FROM users WHERE username = :username LIMIT 1"
         );
-        $stmt->bind_param("s", $employee_id);
-        $stmt->execute();
-        $existing_user = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
+
+        $stmt->execute([
+            ":username" => $employee_id
+        ]);
+
+        $existing_user = $stmt->fetch();
 
         if ($existing_user) {
             $errors[] = "A login account with this Employee ID already exists.";
         }
     }
 
+    // Validate profile photo.
     $uploaded_photo_tmp = null;
     $photo_extension = null;
 
@@ -149,36 +158,49 @@ foreach ($initial_balances as $code => $amount) {
         }
     }
 
+    // Save employee and related records.
     if (!$errors) {
 
-        $conn->begin_transaction();
         $destination = null;
 
         try {
 
+            $conn->beginTransaction();
+
             $stmt = $conn->prepare("
                 INSERT INTO employees
-                    (employee_id, name, designation, department, gender, joining_date, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (
+                        employee_id,
+                        name,
+                        designation,
+                        department,
+                        gender,
+                        joining_date,
+                        status
+                    )
+                VALUES
+                    (
+                        :employee_id,
+                        :name,
+                        :designation,
+                        :department,
+                        :gender,
+                        :joining_date,
+                        :status
+                    )
             ");
 
-            $stmt->bind_param(
-                "sssssss",
-                $employee_id,
-                $name,
-                $designation,
-                $department,
-                $gender,
-                $joining_date,
-                $status
-            );
+            $stmt->execute([
+                ":employee_id" => $employee_id,
+                ":name" => $name,
+                ":designation" => $designation,
+                ":department" => $department,
+                ":gender" => $gender,
+                ":joining_date" => $joining_date,
+                ":status" => $status
+            ]);
 
-            if (!$stmt->execute()) {
-                throw new Exception("Unable to save employee details.");
-            }
-
-            $employee_db_id = $conn->insert_id;
-            $stmt->close();
+            $employee_db_id = (int)$conn->lastInsertId();
 
             $saved_photo_path = null;
 
@@ -201,19 +223,17 @@ foreach ($initial_balances as $code => $amount) {
 
                 $stmt = $conn->prepare("
                     UPDATE employees
-                    SET profile_picture = ?
-                    WHERE id = ?
+                    SET profile_picture = :profile_picture
+                    WHERE id = :id
                 ");
 
-                $stmt->bind_param("si", $saved_photo_path, $employee_db_id);
-
-                if (!$stmt->execute()) {
-                    throw new Exception("Could not save the photo reference.");
-                }
-
-                $stmt->close();
+                $stmt->execute([
+                    ":profile_picture" => $saved_photo_path,
+                    ":id" => $employee_db_id
+                ]);
             }
 
+            // Create employee login account.
             $password_hash = password_hash($employee_id, PASSWORD_DEFAULT);
             $role = "employee";
             $user_status = ($status === "active") ? 1 : 0;
@@ -221,85 +241,69 @@ foreach ($initial_balances as $code => $amount) {
             $stmt = $conn->prepare("
                 INSERT INTO users
                     (employee_id, username, password_hash, role, status)
-                VALUES (?, ?, ?, ?, ?)
+                VALUES
+                    (:employee_id, :username, :password_hash, :role, :status)
             ");
 
-            $stmt->bind_param(
-                "isssi",
-                $employee_db_id,
-                $employee_id,
-                $password_hash,
-                $role,
-                $user_status
-            );
+            $stmt->execute([
+                ":employee_id" => $employee_db_id,
+                ":username" => $employee_id,
+                ":password_hash" => $password_hash,
+                ":role" => $role,
+                ":status" => $user_status
+            ]);
 
-            if (!$stmt->execute()) {
-                throw new Exception("Could not create the employee login account.");
+            // Create initial leave balances.
+            $balance_year = (int)date("Y");
+
+            $balance_stmt = $conn->prepare("
+                INSERT INTO leave_balances
+                    (
+                        employee_id,
+                        leave_type_id,
+                        year,
+                        opening_balance,
+                        credited,
+                        used,
+                        surrendered,
+                        closing_balance
+                    )
+                SELECT
+                    :employee_id,
+                    id,
+                    :year,
+                    :opening_balance,
+                    0,
+                    0,
+                    0,
+                    :closing_balance
+                FROM leave_types
+                WHERE code = :code
+                LIMIT 1
+            ");
+
+            $initial_balances = [
+                "CL" => (float)$initial_cl,
+                "EL" => (float)$initial_el,
+                "HPL" => (float)$initial_hpl
+            ];
+
+            foreach ($initial_balances as $code => $amount) {
+
+                $balance_stmt->execute([
+                    ":employee_id" => $employee_db_id,
+                    ":year" => $balance_year,
+                    ":opening_balance" => $amount,
+                    ":closing_balance" => $amount,
+                    ":code" => $code
+                ]);
+
+                if ($balance_stmt->rowCount() !== 1) {
+                    throw new Exception(
+                        "Could not find the $code leave type or create its balance."
+                    );
+                }
             }
-
-            $stmt->close();
-
-            // Create initial leave balances for the current calendar year.
-$balance_year = (int)date("Y");
-
-$balance_stmt = $conn->prepare("
-    INSERT INTO leave_balances
-        (
-            employee_id,
-            leave_type_id,
-            year,
-            opening_balance,
-            credited,
-            used,
-            surrendered,
-            closing_balance
-        )
-    SELECT
-        ?,
-        id,
-        ?,
-        ?,
-        0,
-        0,
-        0,
-        ?
-    FROM leave_types
-    WHERE code = ?
-    LIMIT 1
-");
-
-$initial_balances = [
-    "CL" => (float)$initial_cl,
-    "EL" => (float)$initial_el,
-    "HPL" => (float)$initial_hpl
-];
-
-foreach ($initial_balances as $code => $amount) {
-
-    $balance_stmt->bind_param(
-        "iidds",
-        $employee_db_id,
-        $balance_year,
-        $amount,
-        $amount,
-        $code
-    );
-
-    if (!$balance_stmt->execute()) {
-        throw new Exception(
-            "Could not create the $code initial leave balance: " .
-            $balance_stmt->error
-        );
-    }
-
-    if ($balance_stmt->affected_rows !== 1) {
-        throw new Exception(
-            "Could not find the $code leave type or create its balance."
-        );
-    }
-}
-
-$balance_stmt->close();
 
             $conn->commit();
 
@@ -308,7 +312,9 @@ $balance_stmt->close();
 
         } catch (Throwable $e) {
 
-            $conn->rollback();
+            if ($conn->inTransaction()) {
+                $conn->rollBack();
+            }
 
             if ($destination !== null && is_file($destination)) {
                 @unlink($destination);
@@ -324,6 +330,7 @@ $balance_stmt->close();
 $admin_name = "Admin";
 
 ?>
+
 
 <!DOCTYPE html>
 <html lang="en">
