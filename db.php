@@ -1,8 +1,6 @@
 
 <?php
 
-mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
-
 try {
 
     $database_url = getenv("DATABASE_URL");
@@ -29,15 +27,13 @@ try {
     $database = urldecode(ltrim($db["path"], "/"));
     $port = $db["port"] ?? 3306;
 
-    $conn = new mysqli(
-        $host,
-        $username,
-        $password,
-        $database,
-        $port
-    );
+    $dsn = "mysql:host=$host;port=$port;dbname=$database;charset=utf8mb4";
 
-    $conn->set_charset("utf8mb4");
+    $conn = new PDO($dsn, $username, $password, [
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        PDO::ATTR_EMULATE_PREPARES => false
+    ]);
 
 } catch (Throwable $e) {
 
