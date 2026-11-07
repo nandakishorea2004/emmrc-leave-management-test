@@ -1,11 +1,13 @@
+
 <?php
 
 /* =========================================================
    SESSION & ACCESS
-   ========================================================= */
+========================================================= */
 
 session_start();
-require_once "db.php";
+
+require_once __DIR__ . "/db.php";
 
 $role = $_SESSION["role"] ?? "";
 
@@ -14,7 +16,7 @@ $role = $_SESSION["role"] ?? "";
  *   Employee is selected using ?id=123456
  *
  * Employee:
- *   Employee is always taken from the logged-in session.
+ *   Employee is taken from the logged-in session.
  */
 
 if ($role === "admin") {
@@ -44,7 +46,7 @@ if ($role === "admin") {
 
 /* =========================================================
    LOAD EMPLOYEE FROM DATABASE
-   ========================================================= */
+========================================================= */
 
 $stmt = $conn->prepare("
     SELECT
@@ -60,19 +62,14 @@ $stmt = $conn->prepare("
     LIMIT 1
 ");
 
-$stmt->bind_param("s", $employee_id);
-$stmt->execute();
+$stmt->execute([$employee_id]);
 
-$result = $stmt->get_result();
-
-$employee = $result->fetch_assoc();
-
-$stmt->close();
+$employee = $stmt->fetch(PDO::FETCH_ASSOC);
 
 
 /* =========================================================
    EMPLOYEE NOT FOUND
-   ========================================================= */
+========================================================= */
 
 if (!$employee) {
 
@@ -88,31 +85,16 @@ if (!$employee) {
 
 /* =========================================================
    DATABASE EMPLOYEE ID
-   ========================================================= */
+========================================================= */
 
 $employee_db_id = (int)$employee["id"];
 
 
 /* =========================================================
    LOAD EMPLOYEE LEAVE RECORDS
-   =========================================================
-
-   Every leave record is expanded day-by-day in PHP.
-
-   Example:
-
-   From: 10-09-2026
-   To:   12-09-2026
-
-   Calendar receives:
-
-   10-09-2026
-   11-09-2026
-   12-09-2026
-   ========================================================= */
+========================================================= */
 
 $leave_calendar = [];
-
 
 $stmt = $conn->prepare("
     SELECT
@@ -132,20 +114,20 @@ $stmt = $conn->prepare("
     ORDER BY lr.from_date ASC, lr.id ASC
 ");
 
-$stmt->bind_param("i", $employee_db_id);
-$stmt->execute();
+$stmt->execute([$employee_db_id]);
 
-$result = $stmt->get_result();
+$leave_records = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 
-while ($row = $result->fetch_assoc()) {
+foreach ($leave_records as $row) {
 
     $from_date = new DateTime($row["from_date"]);
-    $to_date   = new DateTime($row["to_date"]);
+    $to_date = new DateTime($row["to_date"]);
 
     /*
      * Include the ending date.
      */
+
     $to_date_inclusive = clone $to_date;
     $to_date_inclusive->modify("+1 day");
 
@@ -156,89 +138,73 @@ while ($row = $result->fetch_assoc()) {
     );
 
 
+    /*
+     * Leave type → CSS class
+     */
+
+    $leave_class = "casual";
+
+    switch (strtoupper($row["code"])) {
+
+        case "CL":
+            $leave_class = "casual";
+            break;
+
+        case "EL":
+            $leave_class = "earned";
+            break;
+
+        case "HPL":
+            $leave_class = "half-pay";
+            break;
+
+        case "COM":
+            $leave_class = "commuted";
+            break;
+
+        case "SCL":
+            $leave_class = "special";
+            break;
+
+        case "LWA":
+            $leave_class = "lwa";
+            break;
+
+        default:
+            $leave_class = "casual";
+            break;
+    }
+
+
     foreach ($period as $date) {
 
         $date_key = $date->format("Y-m-d");
 
-
         /*
-         * Leave type → CSS class
-         */
-
-        $leave_class = "casual";
-
-        switch (strtoupper($row["code"])) {
-
-            case "CL":
-                $leave_class = "casual";
-                break;
-
-            case "EL":
-                $leave_class = "earned";
-                break;
-
-            case "HPL":
-                $leave_class = "half-pay";
-                break;
-
-            case "COM":
-                $leave_class = "commuted";
-                break;
-
-            case "SCL":
-                $leave_class = "special";
-                break;
-
-            case "LWA":
-                $leave_class = "lwa";
-                break;
-
-            default:
-                $leave_class = "casual";
-                break;
-        }
-
-
-        /*
-         * Store leave information.
-         *
-         * If multiple records happen to fall on the same
-         * date, keep them all.
+         * Keep multiple leave records on the same date.
          */
 
         if (!isset($leave_calendar[$date_key])) {
             $leave_calendar[$date_key] = [];
         }
 
-
         $leave_calendar[$date_key][] = [
-            "code"        => $row["code"],
-            "name"        => $row["name"],
-            "class_name"  => $leave_class,
-            "session_type"=> $row["session_type"],
-            "reason"      => $row["reason"] ?? "",
-            "remarks"     => $row["remarks"] ?? ""
+            "code"         => $row["code"],
+            "name"         => $row["name"],
+            "class_name"   => $leave_class,
+            "session_type" => $row["session_type"],
+            "reason"       => $row["reason"] ?? "",
+            "remarks"      => $row["remarks"] ?? ""
         ];
     }
 }
 
-$stmt->close();
-
 
 /* =========================================================
    LOAD ALL HOLIDAYS
-   =========================================================
-
-   This includes:
-
-   1. Holidays imported from CSV
-   2. Holidays manually added by admin
-
-   Both are stored in the holidays table.
-   ========================================================= */
+========================================================= */
 
 $holiday_calendar = [];
-
 
 $holiday_query = "
     SELECT
@@ -251,44 +217,29 @@ $holiday_query = "
     ORDER BY holiday_date ASC
 ";
 
-$holiday_result = $conn->query($holiday_query);
+$holiday_stmt = $conn->query($holiday_query);
+
+$holidays = $holiday_stmt->fetchAll(PDO::FETCH_ASSOC);
 
 
-if ($holiday_result) {
+foreach ($holidays as $holiday) {
 
-    while ($holiday = $holiday_result->fetch_assoc()) {
+    $date_key = $holiday["holiday_date"];
 
-        $date_key = $holiday["holiday_date"];
-
-        $holiday_calendar[$date_key] = [
-            "description" => $holiday["description"],
-            "day"         => $holiday["day"],
-            "source_type" => $holiday["source_type"]
-        ];
-    }
+    $holiday_calendar[$date_key] = [
+        "description" => $holiday["description"],
+        "day"         => $holiday["day"],
+        "source_type" => $holiday["source_type"]
+    ];
 }
 
 
 /* =========================================================
    DEFAULT WEEKLY HOLIDAYS
-   =========================================================
-
-   Every Sunday:
-       Default Holiday
-
-   Every Second Saturday:
-       Default Holiday
-
-   These are NOT stored in the holidays table.
-
-   They are generated automatically for the calendar.
-
-   Database holidays have priority if the same date
-   already exists in the holidays table.
 ========================================================= */
 
 $default_start_year = 2000;
-$default_end_year   = 2035;
+$default_end_year = 2035;
 
 
 for (
@@ -323,7 +274,6 @@ for (
                 $day
             );
 
-
             $timestamp = strtotime($date_key);
 
 
@@ -331,25 +281,14 @@ for (
 
             if (date("w", $timestamp) == 0) {
 
-                /*
-                 * Only add if there is no
-                 * database holiday on this date.
-                 */
-
                 if (!isset($holiday_calendar[$date_key])) {
 
                     $holiday_calendar[$date_key] = [
-
                         "description" => "Sunday",
-
                         "day" => "Sunday",
-
                         "source_type" => "DEFAULT"
-
                     ];
-
                 }
-
             }
 
 
@@ -361,37 +300,23 @@ for (
                 $day <= 14
             ) {
 
-                /*
-                 * Only add if there is no
-                 * database holiday on this date.
-                 */
-
                 if (!isset($holiday_calendar[$date_key])) {
 
                     $holiday_calendar[$date_key] = [
-
                         "description" => "Second Saturday",
-
                         "day" => "Saturday",
-
                         "source_type" => "DEFAULT"
-
                     ];
-
                 }
-
             }
-
         }
-
     }
-
 }
 
 
 /* =========================================================
    CONVERT DATA TO JSON FOR JAVASCRIPT
-   ========================================================= */
+========================================================= */
 
 $leave_json = json_encode(
     $leave_calendar,
@@ -416,7 +341,7 @@ $holiday_json = json_encode(
 
 /* =========================================================
    BACK LINK
-   ========================================================= */
+========================================================= */
 
 if ($role === "admin") {
 
@@ -433,6 +358,7 @@ if ($role === "admin") {
 }
 
 ?>
+
 
 <!DOCTYPE html>
 <html lang="en">
